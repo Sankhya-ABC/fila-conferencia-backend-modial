@@ -1,9 +1,49 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 
+// ─── Tipos do cache em memória ───────────────────────────────────────────────
+
+type ItemCached = {
+  idProduto: number;
+  nomeProduto: string;
+  complemento: string | null;
+  referencia: string | null;
+  unidade: string;
+  controle: string;
+  tipControle: string | null;
+  decQtd: number;
+  pesoBruto: number;
+  divideMult: string | null;
+  fatorConv: number | null;
+  lisControles: string | null;
+};
+
+type CodigoCached = {
+  codigoBarra: string;
+  idProduto: number;
+  unidade: string | null;
+  controle: string;
+  quantidade: number | null;
+  divideMult: string | null;
+  origem: string;
+};
+
+type SessaoCache = {
+  buscarCodigoBarraPor: string;
+  codigosCarregados: boolean;
+  itens: ItemCached[];
+  codigos: CodigoCached[];
+};
+
 @Injectable()
 export class SessaoService {
   constructor(private readonly prisma: PrismaService) {}
+
+  // Cache em memória keyed por sessaoId.
+  // Evita round-trip ao banco a cada scan — cada beep passa a ser O(1) em memória.
+  // Invalidado na finalização e regenerado na criação da sessão.
+  // Cache miss (ex: restart do servidor) → fallback gracioso ao banco.
+  private readonly sessaoCache = new Map<string, SessaoCache>();
 
   // ─────────────────────────────────────────────
   // Lookup
@@ -50,9 +90,10 @@ export class SessaoService {
     const anterior = await this.prisma.sessaoConferencia.findUnique({ where: { numeroUnico } });
     if (anterior) {
       await this.prisma.sessaoConferencia.delete({ where: { id: anterior.id } });
+      this.sessaoCache.delete(anterior.id);
     }
 
-    await this.prisma.sessaoConferencia.create({
+    const sessaoCriada = await this.prisma.sessaoConferencia.create({
       data: {
         numeroUnico,
         numeroConferencia,
@@ -103,35 +144,77 @@ export class SessaoService {
           ],
         },
       },
+      select: { id: true },
+    });
+
+    // Popula cache a partir dos params (sem query extra ao banco)
+    this.sessaoCache.set(sessaoCriada.id, {
+      buscarCodigoBarraPor,
+      codigosCarregados: true,
+      itens: itens.map((item): ItemCached => ({
+        idProduto: Number(item.CODPROD),
+        nomeProduto: item.DESCRPROD || '',
+        complemento: item.COMPLDESC || null,
+        referencia: item.REFERENCIA || null,
+        unidade: item.CODVOL || 'UN',
+        controle: item.CONTROLE?.trim() || ' ',
+        tipControle: item.TIPCONTEST || null,
+        decQtd: Number(item.DECQTD) || 0,
+        pesoBruto: Number(item.PESOBRUTO) || 0,
+        divideMult: item.DIVIDEMULTIPLICA || null,
+        fatorConv: item.FATOR_CONVERSAO != null ? Number(item.FATOR_CONVERSAO) : null,
+        lisControles: item.LISCONTEST?.trim() || null,
+      })),
+      codigos: codigos.map((c): CodigoCached => ({
+        codigoBarra: String(c.CODBARRA || c.CODIGO || '').trim(),
+        idProduto: Number(c.CODPROD),
+        unidade: c.CODVOL || null,
+        controle: String(c.CONTROLE ?? ' ').trim() || ' ',
+        quantidade: c.QUANTIDADE != null ? Number(c.QUANTIDADE) : null,
+        divideMult: c.DIVIDEMULTIPLICA || null,
+        origem: c.ORIGEM || 'BAR',
+      })),
     });
   }
 
   // ─────────────────────────────────────────────
-  // Resolução de código de barras
+  // Resolução de código de barras (cache-first)
   // ─────────────────────────────────────────────
 
   async resolverCodigoBarras(sessaoId: string, codigoBarra: string) {
-    const sessao = await this.prisma.sessaoConferencia.findUnique({
-      where: { id: sessaoId },
-      select: {
-        buscarCodigoBarraPor: true,
-        codigos: true,
-        itens: {
-          select: {
-            idProduto: true, nomeProduto: true, complemento: true, referencia: true,
-            unidade: true, controle: true, tipControle: true, decQtd: true,
-            pesoBruto: true, divideMult: true, fatorConv: true, lisControles: true,
+    let cached = this.sessaoCache.get(sessaoId);
+
+    // Cache miss (ex: após restart do servidor) — busca do banco e popula cache
+    if (!cached) {
+      const sessao = await this.prisma.sessaoConferencia.findUnique({
+        where: { id: sessaoId },
+        select: {
+          buscarCodigoBarraPor: true,
+          codigos: true,
+          itens: {
+            select: {
+              idProduto: true, nomeProduto: true, complemento: true, referencia: true,
+              unidade: true, controle: true, tipControle: true, decQtd: true,
+              pesoBruto: true, divideMult: true, fatorConv: true, lisControles: true,
+            },
           },
         },
-      },
-    });
-    if (!sessao) return null;
+      });
+      if (!sessao) return null;
 
-    const regra = sessao.buscarCodigoBarraPor;
-    const { itens, codigos } = sessao;
+      cached = {
+        buscarCodigoBarraPor: sessao.buscarCodigoBarraPor,
+        codigosCarregados: sessao.codigos.some((c) => c.origem === 'LOADED'),
+        itens: sessao.itens,
+        codigos: sessao.codigos,
+      };
+      this.sessaoCache.set(sessaoId, cached);
+    }
+
+    const { buscarCodigoBarraPor: regra, itens, codigos } = cached;
 
     const buildResult = (
-      item: (typeof itens)[0],
+      item: ItemCached,
       codvol: string | null,
       controle: string,
       fatorConv: number | null,
@@ -152,7 +235,6 @@ export class SessaoService {
       lisControles: item.lisControles,
     });
 
-    // Encontra item compatível: se controle conhecido, exige match; senão pega o primeiro
     const findItem = (idProduto: number, controle?: string | null) => {
       const norm = controle?.trim() || ' ';
       if (norm !== ' ') {
@@ -162,18 +244,13 @@ export class SessaoService {
       return itens.find((i) => i.idProduto === idProduto);
     };
 
-    // Busca nos codigos locais por origem
-    const findCodigo = (origem: string, extra?: (c: (typeof codigos)[0]) => boolean) =>
+    const findCodigo = (origem: string, extra?: (c: CodigoCached) => boolean) =>
       codigos.find((c) => c.codigoBarra === codigoBarra && c.origem === origem && (!extra || extra(c)));
 
-    // Busca fator de conversão VOA para um produto+unidade
     const voaFatorPara = (idProduto: number, codvol: string | null) =>
       codigos.find((c) => c.idProduto === idProduto && c.unidade === codvol && c.origem === 'VOA');
 
-    // Regra de controle:
-    // - Origem EST com controle específico → pré-preenche
-    // - Qualquer outra origem (BAR, VOA, codprod, referência) → ' ' (usuário seleciona)
-    const controleEst = (est: (typeof codigos)[0]) => {
+    const controleEst = (est: CodigoCached) => {
       const c = est.controle?.trim() || ' ';
       return c !== ' ' ? c : ' ';
     };
@@ -228,7 +305,6 @@ export class SessaoService {
         const item = findItem(est.idProduto, controleEst(est));
         if (item) return buildResult(item, null, controleEst(est), null, null);
       }
-      // Fallback: controle digitado diretamente (ex: número do lote)
       const byControleE = itens.find(
         (i) => i.controle && i.controle.trim() !== ' ' && i.controle.trim() === codigoBarra.trim(),
       );
@@ -237,21 +313,18 @@ export class SessaoService {
     }
 
     // ─── A: Automático ──────────────────────────────────────────────────────
-    // Prioridade 1: Estoque (origem TGFEST — pré-preenche controle)
     const est = findCodigo('EST');
     if (est) {
       const item = findItem(est.idProduto, controleEst(est));
       if (item) return buildResult(item, null, controleEst(est), null, null);
     }
 
-    // Prioridade 2a: VOA (origem TGFVOA — usuário seleciona controle)
     const voa = findCodigo('VOA');
     if (voa) {
       const item = findItem(voa.idProduto);
       if (item) return buildResult(item, voa.unidade, ' ', voa.quantidade, voa.divideMult);
     }
 
-    // Prioridade 2b: BAR com unidade (origem TGFBAR — usuário seleciona controle)
     const barComUnit = findCodigo('BAR', (c) => !!c.unidade);
     if (barComUnit) {
       const item = findItem(barComUnit.idProduto);
@@ -261,20 +334,17 @@ export class SessaoService {
       }
     }
 
-    // Prioridade 3a: BAR sem unidade (origem TGFBAR — usuário seleciona controle)
     const barSemUnit = findCodigo('BAR', (c) => !c.unidade);
     if (barSemUnit) {
       const item = findItem(barSemUnit.idProduto);
       if (item) return buildResult(item, null, ' ', null, null);
     }
 
-    // Prioridade 3b: Referência do produto (usuário seleciona controle)
     const itemByRef = itens.find(
       (i) => i.referencia && i.referencia.trim() === codigoBarra.trim(),
     );
     if (itemByRef) return buildResult(itemByRef, null, ' ', null, null);
 
-    // Prioridade 3c: Controle digitado diretamente (ex: lote AC2838 — controle já é o código)
     const itemByControle = itens.find(
       (i) => i.controle && i.controle.trim() !== ' ' && i.controle.trim() === codigoBarra.trim(),
     );
@@ -288,6 +358,10 @@ export class SessaoService {
   }
 
   async jaCarregouCodigos(sessaoId: string): Promise<boolean> {
+    const cached = this.sessaoCache.get(sessaoId);
+    if (cached) return cached.codigosCarregados;
+
+    // Fallback ao banco se não estiver em cache (ex: restart)
     const sentinel = await this.prisma.sessaoCodigoBarras.findFirst({
       where: { sessaoId, origem: 'LOADED' },
     });
@@ -312,6 +386,21 @@ export class SessaoService {
       ],
       skipDuplicates: true,
     });
+
+    // Atualiza cache
+    const cached = this.sessaoCache.get(sessaoId);
+    if (cached) {
+      cached.codigos = codigos.map((c): CodigoCached => ({
+        codigoBarra: String(c.CODBARRA || c.CODIGO || '').trim(),
+        idProduto: Number(c.CODPROD),
+        unidade: c.CODVOL || null,
+        controle: String(c.CONTROLE ?? ' ').trim() || ' ',
+        quantidade: c.QUANTIDADE != null ? Number(c.QUANTIDADE) : null,
+        divideMult: c.DIVIDEMULTIPLICA || null,
+        origem: c.ORIGEM || 'BAR',
+      }));
+      cached.codigosCarregados = true;
+    }
   }
 
   async marcarFinalizada(sessaoId: string) {
@@ -319,6 +408,7 @@ export class SessaoService {
       where: { id: sessaoId },
       data: { status: 'F' },
     });
+    this.sessaoCache.delete(sessaoId);
   }
 
   // ─────────────────────────────────────────────
@@ -391,9 +481,6 @@ export class SessaoService {
   }
 
   async removerVolume(sessaoId: string, seqVol: number) {
-    // Apaga apenas o registro do volume — as leituras ficam órfãs
-    // (itens permanecem em "conferidos" mas sem volume atribuído)
-    // A renumeração para o Sankhya ocorre apenas na finalização
     await this.prisma.sessaoVolume.deleteMany({ where: { sessaoId, seqVol } });
   }
 
@@ -409,10 +496,8 @@ export class SessaoService {
     };
 
     if (qtd == null) {
-      // Move tudo
       await this.prisma.sessaoLeitura.updateMany({ where, data: { seqVol: seqVolDestino } });
     } else {
-      // Move quantidade parcial: consolida leituras da origem e redistribui
       const exemplo = await this.prisma.sessaoLeitura.findFirst({ where });
       if (!exemplo) return;
 
@@ -538,23 +623,18 @@ export class SessaoService {
     for (const item of itens) {
       const fator = item.fatorConv ?? 1;
 
-      // Total negociado na unidade convertida
       let qtdConvertida = item.qtdNeg;
       if (item.divideMult === 'D') qtdConvertida = item.qtdNeg * fator;
       else if (item.divideMult === 'M' && fator !== 0) qtdConvertida = item.qtdNeg / fator;
 
-      // Baseline Sankhya (unidade base) → converter para unidade convertida
       let qtdSankhyaConv = item.qtdConferidaSankhya;
       if (item.divideMult === 'D') qtdSankhyaConv = item.qtdConferidaSankhya * fator;
       else if (item.divideMult === 'M' && fator !== 0) qtdSankhyaConv = item.qtdConferidaSankhya / fator;
 
-      // qtdConferidaLocal já está na unidade convertida (soma dos scans desta sessão)
       const qtdConvertidaConferida = qtdSankhyaConv + item.qtdConferidaLocal;
 
-      // Ignora itens 100% conferidos que não tiveram scan nesta sessão
       if (Number(qtdConvertida.toFixed(5)) <= Number(qtdConvertidaConferida.toFixed(5)) && item.qtdConferidaLocal === 0) continue;
 
-      // quantidadeBaseConferida: reverter qtdConferidaLocal para unidade base e somar ao baseline
       let qtdLocalBase = item.qtdConferidaLocal;
       if (item.divideMult === 'D' && fator !== 0) qtdLocalBase = item.qtdConferidaLocal / fator;
       else if (item.divideMult === 'M') qtdLocalBase = item.qtdConferidaLocal * fator;
@@ -629,7 +709,6 @@ export class SessaoService {
         };
       });
 
-      // Agrupa itens duplicados (mesmo produto+controle, soma qtd)
       const agrupados = new Map<string, (typeof volItens)[0]>();
       for (const it of volItens) {
         const key = `${it.idProduto}|${it.controle}`;
