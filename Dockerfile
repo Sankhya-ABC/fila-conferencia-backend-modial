@@ -1,17 +1,8 @@
-```dockerfile
 FROM node:20-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    openssl \
-    ca-certificates \
-    bash \
-    curl \
-    git \
-    python3 \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y openssl ca-certificates bash curl python3 build-essential && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 
@@ -25,4 +16,3 @@ EXPOSE 3000
 EXPOSE 5555
 
 CMD ["npm", "run", "start:dev"]
-```

@@ -6,12 +6,11 @@ import { SankhyaLoadRecordsClientModule } from 'src/http-client/load-records/loa
 import { ArquivoController } from './arquivo.controller';
 import { ArquivoService } from './arquivo.service';
 import { ArquivoHelper } from './arquivo.helper';
-import { ProdutoController } from './produto.controller';
 import { SessaoModule } from '../sessao/sessao.module';
 import { PrismaModule } from 'prisma/prisma.module';
 
 @Module({
-  controllers: [ArquivoController, ProdutoController],
+  controllers: [ArquivoController],
   providers: [ArquivoService, ArquivoHelper],
   imports: [
     GatewayClientModule,
