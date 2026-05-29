@@ -123,6 +123,27 @@ export class ConferenciaService {
       } catch { /* soft-fail: não bloqueia a fila se o Sankhya não responder */ }
     }
 
+    // Busca conferências ativas via NUNOTAORIG para notas sem NUCONFATUAL e sem sessão local
+    // (conferência criada no Sankhya sem vincular o NUCONFATUAL na nota)
+    const nunotasOrfas = rows
+      .filter((r) => !r.NUCONFATUAL && !activeNums.has(Number(r.NUNOTA)))
+      .map((r) => Number(r.NUNOTA));
+    const nunotasComConfOrfa = new Set<number>();
+    if (nunotasOrfas.length > 0) {
+      try {
+        const rawOrfas = await this.loadRecordsClient.loadRecords({
+          rootEntity: 'CabecalhoConferencia',
+          fieldset: 'NUNOTAORIG',
+          criteria: {
+            expression: `NUNOTAORIG IN (${nunotasOrfas.join(',')}) AND STATUS = 'A'`,
+          },
+        });
+        for (const c of this.loadRecordsClient.parseEntities(rawOrfas)) {
+          nunotasComConfOrfa.add(Number(c.NUNOTAORIG));
+        }
+      } catch { /* soft-fail */ }
+    }
+
     let data = rows.map((r) => {
       const nuconf = r.NUCONFATUAL ? Number(r.NUCONFATUAL) : null;
       const statusSankhya = nuconf ? (statusSankhyaMap.get(nuconf) ?? null) : null;
@@ -148,9 +169,13 @@ export class ConferenciaService {
       };
     });
 
-    // Oculta notas com NUCONFATUAL preenchido mas sem sessão local
-    // (NUCONFATUAL set + sem sessão = conferência aberta fora deste sistema)
-    data = data.filter((d) => d.codigoStatus === 'A' || d.numeroConferencia === null);
+    // Oculta notas com conferência ativa no Sankhya mas sem sessão local:
+    // caso 1 — NUCONFATUAL preenchido e sem sessão
+    // caso 2 — conferência ativa via NUNOTAORIG sem NUCONFATUAL vinculado (orfã)
+    data = data.filter((d) =>
+      d.codigoStatus === 'A' ||
+      (d.numeroConferencia === null && !nunotasComConfOrfa.has(d.numeroUnico)),
+    );
 
     if (queryParams.codigoStatus) {
       const statusList = queryParams.codigoStatus
