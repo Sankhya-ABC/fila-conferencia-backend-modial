@@ -262,11 +262,11 @@ export class ConferenciaService {
     // Reserva o número (sequencial para evitar duplicatas concorrentes)
     await this.conferenciaHelper.atualizarNumeroConferencia({ numeroConferencia });
 
-    // Cria cabeçalho da conferência (TGFCON2) + carrega sessão local em paralelo
-    await Promise.all([
-      this.conferenciaHelper.atualizarCabecalhoConferencia({ numeroUnico, numeroConferencia, idUsuario }),
-      this.conferenciaHelper.carregarSessao({ numeroUnico, numeroConferencia, idUsuario }),
-    ]);
+    // Cria cabeçalho no Sankhya (TGFCON2) — deve ser sequencial:
+    // carregarSessao só pode rodar depois que o header existir,
+    // caso contrário a sessão local fica orfã (sem TGFCON2 correspondente)
+    await this.conferenciaHelper.atualizarCabecalhoConferencia({ numeroUnico, numeroConferencia, idUsuario });
+    await this.conferenciaHelper.carregarSessao({ numeroUnico, numeroConferencia, idUsuario });
 
     // Vincula a conferência à nota (NUCONFATUAL) — soft-fail: não bloqueia se o Sankhya rejeitar
     this.conferenciaHelper.atualizarCabecalhoNota({ numeroUnico, numeroConferencia })
@@ -294,6 +294,21 @@ export class ConferenciaService {
       const detail = e?.message ? `: ${String(e.message).slice(0, 120)}` : '';
       erros.push(`${label}${detail}`);
     };
+
+    // Recovery: garante que TGFCON2 existe antes de inserir TGFCOI2
+    // Caso o atualizarCabecalhoConferencia tenha falhado durante o init,
+    // a sessão local existe mas o header no Sankhya não — isso causaria FK violation no TGFCOI2
+    await this.datasetSP.save({
+      entityName: 'CabecalhoConferencia',
+      fieldsAndValues: {
+        NUCONF: numeroConferencia,
+        CODUSUCONF: sessao.idUsuario,
+        DHINICONF: dh,
+        NUNOTAORIG: sessao.numeroUnico,
+        QTDVOL: 0,
+        STATUS: 'A',
+      },
+    }).catch(() => { /* já existe — ok */ });
 
     const barcodeMap = new Map<string, string>();
     for (const c of dados.codigos) {
