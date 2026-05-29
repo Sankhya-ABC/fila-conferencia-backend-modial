@@ -148,9 +148,9 @@ export class ConferenciaService {
       };
     });
 
-    // Oculta conferências abertas nativamente no Sankhya sem sessão local
-    // (sem sessão + NUCONFATUAL ativo = outra pessoa abriu fora deste sistema)
-    data = data.filter((d) => !d.emAndamentoNativo);
+    // Oculta notas com NUCONFATUAL preenchido mas sem sessão local
+    // (NUCONFATUAL set + sem sessão = conferência aberta fora deste sistema)
+    data = data.filter((d) => d.codigoStatus === 'A' || d.numeroConferencia === null);
 
     if (queryParams.codigoStatus) {
       const statusList = queryParams.codigoStatus
