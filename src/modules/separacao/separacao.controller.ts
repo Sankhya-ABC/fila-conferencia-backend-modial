@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { NoAuthApp } from 'src/core/guards/auth-app/no-auth-app.decorator';
 import { AuthUserGuard } from 'src/core/guards/auth-user/auth-user.guard';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import {
@@ -11,6 +12,7 @@ import {
 } from './dto/separacao.dto';
 import { SeparacaoService } from './separacao.service';
 
+@NoAuthApp()
 @UseGuards(AuthUserGuard)
 @ApiTags('Separacoes')
 @Controller('separacoes')
