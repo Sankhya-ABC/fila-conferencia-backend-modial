@@ -20,7 +20,7 @@ async function bootstrap() {
       'http://localhost:4200',
       'http://localhost:3000',
       process.env.APP_FRONTEND_HOST,
-    ].filter(Boolean),
+    ].filter((o): o is string => !!o),
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-show-success'],
     credentials: true,
