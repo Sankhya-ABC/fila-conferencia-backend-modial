@@ -19,9 +19,11 @@ import { VolumeModule } from './modules/volume/volume.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SincronizacaoModule } from './modules/sincronizacao/sincronizacao.module';
 import { UsuarioModule } from './modules/usuario/usuario.module';
+import { PrismaModule } from 'prisma/prisma.module';
 
 @Module({
   imports: [
+    PrismaModule,
     AuthAppModule,
     ConferenciaModule,
     DominioModule,

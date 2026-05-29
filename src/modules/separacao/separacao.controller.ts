@@ -3,9 +3,11 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthUserGuard } from 'src/core/guards/auth-user/auth-user.guard';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import {
+  MoverItemVolumeParams,
   PostDevolverItemConferido,
   PostItemConferidoVolume,
   PostRemoverVolumeParams,
+  ResolverCodigoBarrasDto,
 } from './dto/separacao.dto';
 import { SeparacaoService } from './separacao.service';
 
@@ -33,6 +35,12 @@ export class SeparacaoController {
     return this.service.postRemoverVolume(body);
   }
 
+  @Post('mover-item-volume')
+  @ApiOperation({ summary: 'Mover item entre volumes' })
+  postMoverItemVolume(@Body() body: MoverItemVolumeParams) {
+    return this.service.postMoverItemVolume(body);
+  }
+
   @Post('devolver-item-conferido')
   postDevolverItemConferido(@Body() body: PostDevolverItemConferido) {
     return this.service.postDevolverItemConferido(body);
@@ -48,5 +56,11 @@ export class SeparacaoController {
   @ApiOperation({ summary: 'Listar Itens Conferidos' })
   getItensConferidos(@Query() queryParam: NumeroConferenciaFilter) {
     return this.service.getItensConferidos(queryParam);
+  }
+
+  @Post('resolver-codigo-barras')
+  @ApiOperation({ summary: 'Resolve código de barras para produto + unidade + controle' })
+  resolverCodigoBarras(@Body() body: ResolverCodigoBarrasDto) {
+    return this.service.resolverCodigoBarras(body);
   }
 }

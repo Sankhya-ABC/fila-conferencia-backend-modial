@@ -85,6 +85,56 @@ export class CodigosDeBarraParams extends IntersectionType(
   ControleFilter,
 ) {}
 
+export class MoverItemVolumeParams {
+  @ApiProperty({ example: 1234 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  numeroConferencia: number;
+
+  @ApiProperty({ example: 1234 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  idProduto: number;
+
+  @ApiProperty({ example: 'Rosa' })
+  @IsString()
+  @IsOptional()
+  controle: string;
+
+  @ApiProperty({ example: 1, required: false })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  seqVolOrigem?: number;
+
+  @ApiProperty({ example: 2 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  seqVolDestino: number;
+
+  @ApiProperty({ example: 3, required: false })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  qtd?: number;
+}
+
+export class ResolverCodigoBarrasDto {
+  @ApiProperty({ example: 1234 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  numeroConferencia: number;
+
+  @ApiProperty({ example: '7891234567890' })
+  @IsString()
+  @IsNotEmpty()
+  codigoBarras: string;
+}
+
 export class VerificarItemConferidoVolumeParams extends IntersectionType(
   GarantirVolumeParams,
   CodigosDeBarraParams,

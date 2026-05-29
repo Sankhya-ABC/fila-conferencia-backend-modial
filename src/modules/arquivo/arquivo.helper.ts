@@ -1,59 +1,48 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { SankhyaDBExplorerSPClient } from 'src/http-client/db-explorer-sp/db-explorer-sp.client';
+import { PrismaService } from 'prisma/prisma.service';
+import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { NumeroConferenciaFilter } from '../dto/model';
 import { CacheItem } from './dto/arquivo.model';
+import { SessaoService } from '../sessao/sessao.service';
 
 @Injectable()
 export class ArquivoHelper {
-  constructor(private readonly dbExplorerClient: SankhyaDBExplorerSPClient) {}
   private imagemCache = new Map<number, CacheItem>();
+
+  constructor(
+    private readonly loadRecords: SankhyaLoadRecordsClient,
+    private readonly sessaoService: SessaoService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async isCubagemNaoDetalhada({ numeroConferencia }: NumeroConferenciaFilter) {
     try {
-      const sql = `
-      SELECT 
-      CAB.TIPMOV AS codigoTipoMovimento, 
-      TPO.DESCROPER AS descricaoTipoOperacao 
-
-      FROM TGFCAB CAB 
-
-      LEFT JOIN TGFTOP TPO 
-      ON TPO.CODTIPOPER = CAB.CODTIPOPER 
-      AND TPO.DHALTER = CAB.DHTIPOPER 
-
-      WHERE CAB.NUCONFATUAL = ${numeroConferencia} 
-    `;
-      const response = await this.dbExplorerClient.executeQuery(sql);
-
-      const { codigoTipoMovimento, descricaoTipoOperacao } =
-        response?.[0] || {};
-
-      const isCubagemNaoDetalhadaFlag =
-        codigoTipoMovimento === 'P' &&
-        descricaoTipoOperacao === 'CUBAGEM DE PEDIDO';
-
-      return isCubagemNaoDetalhadaFlag;
+      const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
+      if (!sessao) return false;
+      return this.sessaoService.isCubagemNaoDetalhada(sessao.id);
     } catch {
-      throw new BadRequestException(
-        'Erro ao obter informações da conferência.',
-      );
+      throw new BadRequestException('Erro ao obter informações da conferência.');
     }
   }
 
   async obterImagemProduto(idProduto: number) {
     const cache = this.imagemCache.get(idProduto);
-
     if (cache && cache.expiresAt > Date.now()) {
       return cache.value;
     }
 
-    const response = await this.dbExplorerClient.executeQuery(`
-    SELECT IMAGEM
-    FROM TGFPRO
-    WHERE CODPROD = ${idProduto};
-  `);
+    const raw = await this.loadRecords.loadRecords({
+      rootEntity: 'Produto',
+      fieldset: 'IMAGEM',
+      criteria: {
+        expression: 'CODPROD = ?',
+        parameters: [{ value: idProduto, type: 'I' }],
+      },
+      limit: 1,
+    });
 
-    let imagem = response?.[0]?.IMAGEM || null;
+    const rows = this.loadRecords.parseEntities(raw);
+    let imagem = rows[0]?.IMAGEM ?? null;
 
     if (imagem) {
       imagem = Buffer.from(imagem, 'hex').toString('base64');
@@ -68,82 +57,91 @@ export class ArquivoHelper {
     return imagem;
   }
 
-  async obterCubagemNaoDetalhada({
-    numeroConferencia,
-  }: NumeroConferenciaFilter) {
+  // ─── Cubagem não detalhada (volumes com dimensões) ─────────────────────────
+  // Reconstruída a partir do banco local + LoadRecords para info da nota
+
+  async obterCubagemNaoDetalhada({ numeroConferencia }: NumeroConferenciaFilter) {
     try {
-      const sql = `
-      SELECT
-        CUB.SEQVOL AS seqVol,
+      const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
+      if (!sessao) return [];
 
-        CAB.NUNOTA AS numeroUnico,
-        CAB.NUMNOTA AS notaFiscal,
-        CAB.UFADQUIRENTE AS uf,
+      // Volumes com dimensões preenchidas (banco local)
+      const volumesComDim = await this.prisma.sessaoVolume.findMany({
+        where: {
+          sessaoId: sessao.id,
+          OR: [
+            { altura: { not: null } },
+            { largura: { not: null } },
+            { comprimento: { not: null } },
+            { peso: { not: null } },
+          ],
+        },
+        orderBy: { seqVol: 'asc' },
+        select: { seqVol: true },
+      });
 
-        PAR.RAZAOSOCIAL AS cliente
+      if (!volumesComDim.length) return [];
 
-      FROM AD_CUBAGEM CUB
+      const notaInfo = await this.carregarInfoNota(sessao.numeroUnico);
 
-      JOIN TGFCON2 CON
-        ON CON.NUCONF = CUB.NUCONF
-
-      JOIN TGFCAB CAB
-        ON CAB.NUNOTA = CON.NUNOTAORIG
-
-      JOIN TGFPAR PAR
-        ON PAR.CODPARC = CAB.CODPARC
-
-      WHERE CUB.NUCONF = ${numeroConferencia}
-        AND CUB.ALTURA IS NOT NULL
-        AND CUB.LARGURA IS NOT NULL
-        AND CUB.COMPRIMENTO IS NOT NULL
-        AND CUB.PESO IS NOT NULL
-
-      ORDER BY CUB.SEQVOL ASC
-    `;
-      const response = await this.dbExplorerClient.executeQuery(sql);
-      return response;
+      return volumesComDim.map((v) => ({
+        seqVol: v.seqVol,
+        ...notaInfo,
+      }));
     } catch {
-      throw new BadRequestException(
-        'Erro ao obter informações da cubagem não detalhada.',
-      );
+      throw new BadRequestException('Erro ao obter informações da cubagem não detalhada.');
     }
   }
 
+  // ─── Cubagem detalhada (volumes com leituras) ──────────────────────────────
+
   async obterCubagemDetalhada({ numeroConferencia }: NumeroConferenciaFilter) {
     try {
-      const sql = `
-      SELECT DISTINCT
-        IVC.SEQVOL AS seqVol,
+      const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
+      if (!sessao) return [];
 
-        CAB.NUNOTA AS numeroUnico,
-        CAB.NUMNOTA AS notaFiscal,
-        CAB.UFADQUIRENTE AS uf,
+      // seqVols distintos que possuem leituras com qtd > 0 (banco local)
+      const leiturasAgrupadas = await this.prisma.sessaoLeitura.groupBy({
+        by: ['seqVol'],
+        where: { sessaoId: sessao.id, qtd: { gt: 0 } },
+        orderBy: { seqVol: 'asc' },
+      });
 
-        PAR.RAZAOSOCIAL AS cliente
+      if (!leiturasAgrupadas.length) return [];
 
-      FROM TGFIVC IVC
+      const notaInfo = await this.carregarInfoNota(sessao.numeroUnico);
 
-      JOIN TGFCON2 CON
-        ON CON.NUCONF = IVC.NUCONF
-
-      JOIN TGFCAB CAB
-        ON CAB.NUNOTA = CON.NUNOTAORIG
-
-      JOIN TGFPAR PAR
-        ON PAR.CODPARC = CAB.CODPARC
-
-      WHERE IVC.NUCONF = ${numeroConferencia}
-        AND IVC.QTD > 0
-
-      ORDER BY IVC.SEQVOL ASC
-    `;
-      const response = await this.dbExplorerClient.executeQuery(sql);
-      return response;
+      return leiturasAgrupadas.map((l) => ({
+        seqVol: l.seqVol,
+        ...notaInfo,
+      }));
     } catch {
-      throw new BadRequestException(
-        'Erro ao obter informações da cubagem detalhada.',
-      );
+      throw new BadRequestException('Erro ao obter informações da cubagem detalhada.');
     }
+  }
+
+  // ─── Carrega info da nota via LoadRecords ──────────────────────────────────
+
+  private async carregarInfoNota(numeroUnico: number) {
+    const raw = await this.loadRecords.loadRecords({
+      rootEntity: 'CabecalhoNota',
+      fieldset: 'NUNOTA,NUMNOTA,UFADQUIRENTE,CODPARC',
+      criteria: {
+        expression: 'NUNOTA = ?',
+        parameters: [{ value: numeroUnico, type: 'I' }],
+      },
+      joins: [{ path: 'Parceiro', fieldset: 'RAZAOSOCIAL' }],
+      limit: 1,
+    });
+
+    const rows = this.loadRecords.parseEntities(raw);
+    const r = rows[0];
+
+    return {
+      numeroUnico: r ? Number(r.NUNOTA) : numeroUnico,
+      notaFiscal: r ? Number(r.NUMNOTA) : null,
+      uf: r?.UFADQUIRENTE ?? null,
+      cliente: r?.['Parceiro_RAZAOSOCIAL'] ?? null,
+    };
   }
 }

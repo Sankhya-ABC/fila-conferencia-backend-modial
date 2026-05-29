@@ -1,0 +1,5 @@
+ALTER TABLE "SessaoConferencia" ADD COLUMN "qtdVol" INTEGER;
+ALTER TABLE "SessaoConferencia" ADD COLUMN "altura" DOUBLE PRECISION;
+ALTER TABLE "SessaoConferencia" ADD COLUMN "largura" DOUBLE PRECISION;
+ALTER TABLE "SessaoConferencia" ADD COLUMN "comprimento" DOUBLE PRECISION;
+ALTER TABLE "SessaoConferencia" ADD COLUMN "peso" DOUBLE PRECISION;

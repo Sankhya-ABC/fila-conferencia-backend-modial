@@ -14,7 +14,7 @@ interface LoadRecordsParams {
   };
   joins?: {
     path: string;
-    fieldset: string;
+    fieldset?: string;
   }[];
   modifiedSince?: string;
   offsetPage?: number;
@@ -64,14 +64,16 @@ export class SankhyaLoadRecordsClient {
     }
 
     if (criteria?.expression) {
-      body.requestBody.dataSet.criteria = {
+      const criteriaBody: any = {
         expression: { $: criteria.expression },
-        parameter:
-          criteria.parameters?.map((param) => ({
-            $: String(param.value),
-            type: param.type,
-          })) ?? [],
       };
+      if (criteria.parameters?.length) {
+        criteriaBody.parameter = criteria.parameters.map((param) => ({
+          $: String(param.value),
+          type: param.type,
+        }));
+      }
+      body.requestBody.dataSet.criteria = criteriaBody;
     }
 
     const entityList: any[] = [];
@@ -84,10 +86,9 @@ export class SankhyaLoadRecordsClient {
     }
 
     joins.forEach((join) => {
-      entityList.push({
-        path: join.path,
-        fieldset: { list: join.fieldset },
-      });
+      const entry: any = { path: join.path };
+      if (join.fieldset) entry.fieldset = { list: join.fieldset };
+      entityList.push(entry);
     });
 
     if (entityList.length) {
@@ -108,5 +109,35 @@ export class SankhyaLoadRecordsClient {
         error?.response?.status || 500,
       );
     }
+  }
+
+  parseEntities(rawResponse: any): Record<string, any>[] {
+    const entities = rawResponse?.responseBody?.entities;
+    if (!entities?.metadata?.fields?.field) return [];
+
+    const fields = entities.metadata.fields.field;
+    const fieldNames: string[] = Array.isArray(fields)
+      ? fields.map((f: any) => f.name)
+      : [fields.name];
+
+    const entityData = entities.entity;
+    const rows = Array.isArray(entityData)
+      ? entityData
+      : entityData
+        ? [entityData]
+        : [];
+
+    return rows.map((row: any) => {
+      const obj: Record<string, any> = {};
+      fieldNames.forEach((name, i) => {
+        const cell = row[`f${i}`];
+        obj[name] = cell?.['$'] ?? null;
+      });
+      return obj;
+    });
+  }
+
+  hasNextPage(rawResponse: any): boolean {
+    return rawResponse?.responseBody?.entities?.hasMoreResult === 'true';
   }
 }

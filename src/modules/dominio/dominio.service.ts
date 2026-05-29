@@ -1,76 +1,93 @@
 import { Injectable } from '@nestjs/common';
-import { SankhyaDBExplorerSPClient } from 'src/http-client/db-explorer-sp/db-explorer-sp.client';
+import { PrismaService } from 'prisma/prisma.service';
+import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 
 @Injectable()
 export class DominioService {
-  constructor(private readonly dbExplorerClient: SankhyaDBExplorerSPClient) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly loadRecords: SankhyaLoadRecordsClient,
+  ) {}
 
-  async getStatus() {
-    const sql = `
-    SELECT 
-    OPC.VALOR AS "codigo", 
-    OPC.OPCAO AS "descricao" 
-
-    FROM TDDOPC OPC 
-
-    WHERE OPC.NUCAMPO = 64923 
-
-    ORDER BY OPC.VALOR 
-    `;
-    const response = await this.dbExplorerClient.executeQuery(sql);
-    return response;
+  getStatus() {
+    return [
+      { codigo: 'A',  descricao: 'Em andamento' },
+      { codigo: 'AC', descricao: 'Aguardando conferência' },
+      { codigo: 'AL', descricao: 'Aguardando liberação p/ conferência' },
+      { codigo: 'C',  descricao: 'Aguardando liberação de corte' },
+      { codigo: 'D',  descricao: 'Finalizada divergente' },
+      { codigo: 'F',  descricao: 'Finalizada OK' },
+      { codigo: 'R',  descricao: 'Aguardando recontagem' },
+      { codigo: 'RA', descricao: 'Recontagem em andamento' },
+      { codigo: 'RD', descricao: 'Recontagem finalizada divergente' },
+      { codigo: 'RF', descricao: 'Recontagem finalizada OK' },
+      { codigo: 'Z',  descricao: 'Aguardando finalização' },
+    ];
   }
 
-  async getTipoMovimento() {
-    const sql = `
-    SELECT 
-    OPC.VALOR AS "codigo", 
-    OPC.OPCAO AS "descricao" 
+  getTipoMovimento() {
+    return [
+      { codigo: 'P', descricao: 'Pedido de Vendas' },
+      { codigo: 'V', descricao: 'Venda' },
+      { codigo: 'O', descricao: 'Pedido de Compra' },
+      { codigo: 'C', descricao: 'Compra' },
+    ];
+  }
 
-    FROM TDDOPC OPC 
-
-    WHERE OPC.NUCAMPO = 739 
-
-    ORDER BY OPC.VALOR 
-    `;
-    const response = await this.dbExplorerClient.executeQuery(sql);
-    return response;
+  getTipoEntrega() {
+    return [
+      { codigo: '1', descricao: 'Transportadora' },
+      { codigo: '2', descricao: 'Cliente Retira' },
+      { codigo: '3', descricao: 'Modial Entrega' },
+      { codigo: '4', descricao: 'Correios' },
+      { codigo: '5', descricao: 'Retira Feira' },
+      { codigo: '6', descricao: 'Evento Modial' },
+    ];
   }
 
   async getTipoOperacao() {
-    const sql = `
-    SELECT 
-    TPO.CODTIPOPER AS "codigo", 
-    TPO.DESCROPER AS "descricao" 
+    const local = await this.prisma.dominio.findMany({
+      where: { tipo: 'TIPO_OPERACAO' },
+      select: { codigo: true, descricao: true },
+      orderBy: { codigo: 'asc' },
+    });
 
-    FROM TGFTOP TPO 
+    if (local.length > 0) {
+      return local;
+    }
 
-    WHERE TPO.ATIVO = 'S' 
-    AND TPO.DHALTER = ( 
-    SELECT MAX(TPO2.DHALTER) 
-    FROM TGFTOP TPO2 
-    WHERE TPO2.CODTIPOPER = TPO.CODTIPOPER 
-    ) 
+    await this.sincronizarTipoOperacao();
 
-    ORDER BY TPO.CODTIPOPER 
-    `;
-    const response = await this.dbExplorerClient.executeQuery(sql);
-    return response;
+    return this.prisma.dominio.findMany({
+      where: { tipo: 'TIPO_OPERACAO' },
+      select: { codigo: true, descricao: true },
+      orderBy: { codigo: 'asc' },
+    });
   }
 
-  async getTipoEntrega() {
-    const sql = `
-    SELECT 
-    OPC.VALOR AS "codigo", 
-    OPC.OPCAO AS "descricao" 
+  private async sincronizarTipoOperacao() {
+    const registros: Record<string, any>[] = [];
+    let page = 0;
+    while (true) {
+      const raw = await this.loadRecords.loadRecords({
+        rootEntity: 'TipoOperacao',
+        fieldset: 'CODTIPOPER,DESCROPER',
+        criteria: { expression: 'NUCCO IS NOT NULL' },
+        offsetPage: page,
+      });
+      registros.push(...this.loadRecords.parseEntities(raw));
+      if (!this.loadRecords.hasNextPage(raw)) break;
+      page++;
+    }
 
-    FROM TDDOPC OPC 
-
-    WHERE OPC.NUCAMPO = 9999990877 
-    
-    ORDER BY OPC.VALOR 
-    `;
-    const response = await this.dbExplorerClient.executeQuery(sql);
-    return response;
+    await Promise.all(
+      registros.map((r) =>
+        this.prisma.dominio.upsert({
+          where: { tipo_codigo: { tipo: 'TIPO_OPERACAO', codigo: String(r.CODTIPOPER) } },
+          update: { descricao: r.DESCROPER },
+          create: { tipo: 'TIPO_OPERACAO', codigo: String(r.CODTIPOPER), descricao: r.DESCROPER },
+        }),
+      ),
+    );
   }
 }

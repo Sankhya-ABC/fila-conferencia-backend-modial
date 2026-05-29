@@ -15,7 +15,7 @@ enum Perfil {
 
 model User {
   id           String   @id @default(uuid())
-  
+
   codigo       Int      @unique
   nome         String
   email        String   @unique
@@ -25,9 +25,148 @@ model User {
   senha        String?
   ativo        Boolean  @default(false)
 
-  resetToken      String? 
+  resetToken      String?
   resetTokenExp   DateTime?
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+model Dominio {
+  id        Int    @id @default(autoincrement())
+  tipo      String
+  codigo    String
+  descricao String
+
+  @@unique([tipo, codigo])
+}
+
+model Empresa {
+  codigo   Int     @id
+  nome     String
+  cpfCnpj String?
+}
+
+model Parceiro {
+  codigo   Int     @id
+  nome     String
+  cpfCnpj String?
+}
+
+model SessaoConferencia {
+  id                    String   @id @default(uuid())
+  numeroUnico           Int      @unique
+  numeroConferencia     Int
+  idUsuario             Int
+  codigoTipoMovimento   String?
+  descricaoTipoOperacao String?
+  buscarCodigoBarraPor  String   @default("A")
+  status                String   @default("A")
+  criadoEm              DateTime @default(now())
+
+  qtdVol      Int?
+  altura      Float?
+  largura     Float?
+  comprimento Float?
+  peso        Float?
+
+  itens    SessaoItem[]
+  volumes  SessaoVolume[]
+  leituras SessaoLeitura[]
+  codigos  SessaoCodigoBarras[]
+}
+
+model SessaoItem {
+  id           String            @id @default(uuid())
+  sessaoId     String
+  sessao       SessaoConferencia @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+
+  sequencia           Int
+  idProduto           Int
+  nomeProduto         String
+  complemento         String?
+  marca               String?
+  referencia          String?
+  unidade             String
+  controle            String    @default(" ")
+  tipControle         String?
+  decQtd              Int       @default(0)
+  pesoBruto           Float     @default(0)
+
+  qtdNeg              Float
+  qtdEntregue         Float     @default(0)
+  qtdConferidaSankhya Float     @default(0)
+  qtdConferidaLocal   Float     @default(0)
+
+  divideMult   String?
+  fatorConv    Float?
+  imagem       String?
+  lisControles String?
+
+  @@unique([sessaoId, sequencia])
+}
+
+model SessaoVolume {
+  id          String            @id @default(uuid())
+  sessaoId    String
+  sessao      SessaoConferencia @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+
+  seqVol      Int
+  ordem       Int
+  altura      Float?
+  largura     Float?
+  comprimento Float?
+  peso        Float?
+
+  @@unique([sessaoId, seqVol])
+}
+
+model SessaoLeitura {
+  id           String            @id @default(uuid())
+  sessaoId     String
+  sessao       SessaoConferencia @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+
+  seqVol       Int
+  idProduto    Int
+  unidade      String
+  controle     String    @default(" ")
+  codigoBarras String?
+  qtd          Float
+  qtdVolpad    Float
+  criadoEm     DateTime  @default(now())
+}
+
+model SessaoCodigoBarras {
+  id          String            @id @default(uuid())
+  sessaoId    String
+  sessao      SessaoConferencia @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+
+  codigoBarra String
+  idProduto   Int
+  unidade     String?
+  controle    String    @default(" ")
+  quantidade  Float?
+  divideMult  String?
+  origem      String    @default("BAR")
+}
+
+model ProdutoCache {
+  idProduto   Int      @id
+  nome        String
+  complemento String?
+  imagem      String?
+  syncAt      DateTime @updatedAt
+}
+
+model CodigoBarrasCache {
+  id          String   @id @default(uuid())
+  codigoBarra String
+  idProduto   Int
+  codvol      String?
+  controle    String   @default(" ")
+  quantidade  Float?
+  divideMult  String?
+  origem      String   @default("BAR")
+
+  @@unique([codigoBarra, idProduto, controle, origem])
 }

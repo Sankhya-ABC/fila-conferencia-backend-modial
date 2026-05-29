@@ -8,8 +8,6 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { LoggerInterceptor } from './core/logger/logger.interceptor';
 
-import { webcrypto } from 'crypto';
-(global as any).crypto = webcrypto;
 
 async function bootstrap() {
   const app = await NestFactory.create<NestFastifyApplication>(

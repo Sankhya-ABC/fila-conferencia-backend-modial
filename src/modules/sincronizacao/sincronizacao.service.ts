@@ -1,45 +1,89 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { Perfil } from '@prisma/client';
 import { PrismaService } from 'prisma/prisma.service';
+import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { SankhyaDBExplorerSPClient } from 'src/http-client/db-explorer-sp/db-explorer-sp.client';
 
 @Injectable()
 export class SincronizacaoService {
+  private readonly logger = new Logger(SincronizacaoService.name);
+
   constructor(
     private prisma: PrismaService,
-    private readonly dbExplorerClient: SankhyaDBExplorerSPClient,
+    private readonly loadRecords: SankhyaLoadRecordsClient,
+    private readonly dbExplorer: SankhyaDBExplorerSPClient,
   ) {}
+
+  @Cron('0 */4 * * *')
+  async popularTipoOperacao() {
+    try {
+      console.log('INÍCIO: SINCRONIZAÇÃO - TIPO OPERAÇÃO');
+
+      const registros: Record<string, any>[] = [];
+      let page = 0;
+      while (true) {
+        const raw = await this.loadRecords.loadRecords({
+          rootEntity: 'TipoOperacao',
+          fieldset: 'CODTIPOPER,DESCROPER',
+          criteria: { expression: 'NUCCO IS NOT NULL' },
+          offsetPage: page,
+        });
+        registros.push(...this.loadRecords.parseEntities(raw));
+        if (!this.loadRecords.hasNextPage(raw)) break;
+        page++;
+      }
+
+      await Promise.all(
+        registros.map((r) =>
+          this.prisma.dominio.upsert({
+            where: { tipo_codigo: { tipo: 'TIPO_OPERACAO', codigo: String(r.CODTIPOPER) } },
+            update: { descricao: r.DESCROPER },
+            create: { tipo: 'TIPO_OPERACAO', codigo: String(r.CODTIPOPER), descricao: r.DESCROPER },
+          }),
+        ),
+      );
+
+      console.log('FIM: SINCRONIZAÇÃO - TIPO OPERAÇÃO');
+    } catch (error) {
+      console.log(error);
+      throw new BadRequestException('Erro ao sincronizar tipo operação');
+    }
+  }
 
   @Cron('*/10 * * * *')
   async popularUsuarios() {
     try {
       console.log('INÍCIO: SINCRONIZAÇÃO - USUÁRIOS');
 
-      let usuarios: any = await this.dbExplorerClient.executeQuery(`
-      SELECT 
-        USU.CODUSU AS codigo,
-        USU.NOMEUSU AS nome,
-        USU.EMAIL AS email,
-        USU.FOTO AS foto,
-        USU.CODGRUPO AS codGrupo,
-        GRU.NOMEGRUPO AS nomeGrupo
-      FROM TSIUSU USU
-      LEFT JOIN TSIGRU GRU ON GRU.CODGRUPO = USU.CODGRUPO
-      WHERE USU.EMAIL IS NOT NULL
-      `);
+      const usuarioRows: Record<string, any>[] = [];
+      let page = 0;
+      while (true) {
+        const raw = await this.loadRecords.loadRecords({
+          rootEntity: 'Usuario',
+          fieldset: 'CODUSU,NOMEUSU,EMAIL,FOTO,CODGRUPO',
+          criteria: { expression: 'EMAIL IS NOT NULL' },
+          joins: [{ path: 'GrupoUsuario', fieldset: 'NOMEGRUPO' }],
+          offsetPage: page,
+        });
+        usuarioRows.push(...this.loadRecords.parseEntities(raw));
+        if (!this.loadRecords.hasNextPage(raw)) break;
+        page++;
+      }
 
-      usuarios = usuarios.map((data) => ({
-        codigo: data.codigo,
-        nome: data.nome.trim() || '',
-        email: data.email,
-        foto: data.foto,
-        perfil:
-          data.nomeGrupo?.trim() === 'ADMINISTRADOR' ||
-          data.nomeGrupo?.trim() === 'DIRETORIA' ||
-          data.nomeGrupo?.trim() === ''
-            ? 'ADMINISTRADOR'
-            : 'SEPARADOR',
-      }));
+      const usuarios = usuarioRows.map((data) => {
+        const nomeGrupo = (data['GrupoUsuario_NOMEGRUPO'] ?? '').trim();
+        return {
+          codigo: Number(data.CODUSU),
+          nome: String(data.NOMEUSU ?? '').trim(),
+          email: data.EMAIL,
+          foto: data.FOTO ?? null,
+          perfil:
+            nomeGrupo === 'ADMINISTRADOR' || nomeGrupo === 'DIRETORIA' || nomeGrupo === ''
+              ? Perfil.ADMINISTRADOR
+              : Perfil.SEPARADOR,
+        };
+      });
 
       await Promise.all(
         usuarios.map((usuario) =>
@@ -53,12 +97,7 @@ export class SincronizacaoService {
             },
             create: {
               ...usuario,
-              ativo:
-                usuario.perfil === 'ADMINISTRADOR' ||
-                usuario.perfil === 'DIRETORIA' ||
-                usuario.perfil === ''
-                  ? true
-                  : false,
+              ativo: usuario.perfil === Perfil.ADMINISTRADOR,
             },
           }),
         ),
@@ -69,5 +108,207 @@ export class SincronizacaoService {
       console.log(error);
       throw new BadRequestException('Erro ao sincronizar usuários');
     }
+  }
+
+  async diagnosticoImagem(codprod?: number) {
+    const stats = await this.dbExplorer.executeQuery(
+      `SELECT COUNT(*) AS TOTAL, AVG(DATALENGTH(IMAGEM)) AS MEDIA_BYTES, MAX(DATALENGTH(IMAGEM)) AS MAX_BYTES FROM TGFPRO WHERE IMAGEM IS NOT NULL`,
+    ).catch((e) => ({ erro: String(e?.message ?? e) }));
+
+    return { stats };
+  }
+
+  @Cron('0 */6 * * *')
+  async sincronizarProdutos() {
+    this.logger.log('INÍCIO: SINCRONIZAÇÃO - PRODUTOS E CÓDIGOS DE BARRAS');
+
+    // ── 1. Produtos (dados básicos via loadRecords) ──────────────────────────
+    const produtoRows: Record<string, any>[] = [];
+    let page = 0;
+    while (true) {
+      const raw = await this.loadRecords.loadRecords({
+        rootEntity: 'Produto',
+        fieldset: 'CODPROD,DESCRPROD,COMPLDESC',
+        offsetPage: page,
+      });
+      produtoRows.push(...this.loadRecords.parseEntities(raw));
+      if (!this.loadRecords.hasNextPage(raw)) break;
+      page++;
+    }
+
+    // Upsert básico (sem imagem ainda)
+    for (let i = 0; i < produtoRows.length; i += 200) {
+      const batch = produtoRows.slice(i, i + 200);
+      await Promise.all(
+        batch.map((p) =>
+          this.prisma.produtoCache.upsert({
+            where: { idProduto: Number(p.CODPROD) },
+            update: { nome: p.DESCRPROD || '', complemento: p.COMPLDESC ?? null },
+            create: { idProduto: Number(p.CODPROD), nome: p.DESCRPROD || '', complemento: p.COMPLDESC ?? null, imagem: null },
+          }),
+        ),
+      );
+    }
+
+    // ── 1b. Imagens via DbExplorer (SQL Server: image→varbinary→hex) ──────────
+    const codprodsComImagem = await this.dbExplorer.executeQuery(
+      `SELECT CODPROD FROM TGFPRO WHERE IMAGEM IS NOT NULL ORDER BY CODPROD`,
+    ).catch(() => [] as any[]);
+
+    // Lotes de 3: respostas menores evitam timeout no gateway (30s) para imagens grandes
+    const imagemBatchSize = 3;
+    let imagensSincronizadas = 0;
+
+    const salvarImagem = async (codprod: number): Promise<boolean> => {
+      try {
+        const rows = await this.dbExplorer.executeQuery(
+          `SELECT CODPROD, DESCRPROD, COMPLDESC, CONVERT(NVARCHAR(MAX), CAST(IMAGEM AS VARBINARY(MAX)), 2) AS IMAGEM_HEX FROM TGFPRO WHERE CODPROD = ${codprod}`,
+        );
+        const row = (rows as any[])[0];
+        const hex = row?.IMAGEM_HEX as string | null;
+        if (!hex) return false;
+        const mime = hex.startsWith('89504E47') ? 'image/png'
+                   : hex.startsWith('FFD8FF')   ? 'image/jpeg'
+                   : 'image/jpeg';
+        const imagem = `data:${mime};base64,${Buffer.from(hex, 'hex').toString('base64')}`;
+        await this.prisma.produtoCache.upsert({
+          where: { idProduto: codprod },
+          update: { imagem },
+          create: {
+            idProduto: codprod,
+            nome: row.DESCRPROD || String(codprod),
+            complemento: row.COMPLDESC ?? null,
+            imagem,
+          },
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    for (let i = 0; i < codprodsComImagem.length; i += imagemBatchSize) {
+      const batch = codprodsComImagem.slice(i, i + imagemBatchSize);
+      const ids = batch.map((r: any) => Number(r.CODPROD)).join(',');
+
+      // Tenta o lote inteiro primeiro (mais rápido)
+      const rowsLote = await this.dbExplorer.executeQuery(
+        `SELECT CODPROD, DESCRPROD, COMPLDESC, CONVERT(NVARCHAR(MAX), CAST(IMAGEM AS VARBINARY(MAX)), 2) AS IMAGEM_HEX FROM TGFPRO WHERE CODPROD IN (${ids})`,
+      ).catch(() => null);
+
+      if (rowsLote !== null) {
+        // Lote OK: salva todos
+        const resultados = await Promise.all(
+          (rowsLote as any[]).map(async (row: any) => {
+            const hex = row.IMAGEM_HEX as string | null;
+            if (!hex) return false;
+            const mime = hex.startsWith('89504E47') ? 'image/png'
+                       : hex.startsWith('FFD8FF')   ? 'image/jpeg'
+                       : 'image/jpeg';
+            const imagem = `data:${mime};base64,${Buffer.from(hex, 'hex').toString('base64')}`;
+            return this.prisma.produtoCache.upsert({
+              where: { idProduto: Number(row.CODPROD) },
+              update: { imagem },
+              create: {
+                idProduto: Number(row.CODPROD),
+                nome: row.DESCRPROD || String(row.CODPROD),
+                complemento: row.COMPLDESC ?? null,
+                imagem,
+              },
+            }).then(() => true).catch(() => false);
+          }),
+        );
+        imagensSincronizadas += resultados.filter(Boolean).length;
+      } else {
+        // Lote falhou (provavelmente imagem grande): retry individual
+        for (const r of batch) {
+          const ok = await salvarImagem(Number(r.CODPROD));
+          if (ok) imagensSincronizadas++;
+        }
+      }
+    }
+
+    // ── 2. Códigos de barras (BAR) ───────────────────────────────────────────
+    const barRows: Record<string, any>[] = [];
+    page = 0;
+    while (true) {
+      const raw = await this.loadRecords.loadRecords({
+        rootEntity: 'CodigoBarras',
+        fieldset: 'CODPROD,CODVOL,CODBARRA',
+        offsetPage: page,
+      });
+      barRows.push(...this.loadRecords.parseEntities(raw));
+      if (!this.loadRecords.hasNextPage(raw)) break;
+      page++;
+    }
+
+    // ── 3. Códigos de barras (VOA) ───────────────────────────────────────────
+    const voaRows: Record<string, any>[] = [];
+    page = 0;
+    while (true) {
+      const raw = await this.loadRecords.loadRecords({
+        rootEntity: 'VolumeAlternativo',
+        fieldset: 'CODPROD,CODVOL,CONTROLE,DIVIDEMULTIPLICA,QUANTIDADE,CODBARRA',
+        criteria: { expression: 'CODBARRA IS NOT NULL' },
+        offsetPage: page,
+      });
+      voaRows.push(...this.loadRecords.parseEntities(raw));
+      if (!this.loadRecords.hasNextPage(raw)) break;
+      page++;
+    }
+
+    type CacheCodigo = {
+      codigoBarra: string; idProduto: number; codvol: string | null;
+      controle: string; quantidade: number | null; divideMult: string | null; origem: string;
+    };
+
+    const allCodigos: CacheCodigo[] = [
+      ...barRows
+        .filter((b) => b.CODBARRA)
+        .map((b) => ({
+          codigoBarra: String(b.CODBARRA).trim(),
+          idProduto: Number(b.CODPROD),
+          codvol: b.CODVOL || null,
+          controle: ' ',
+          quantidade: null,
+          divideMult: null,
+          origem: 'BAR',
+        })),
+      ...voaRows
+        .filter((v) => v.CODBARRA)
+        .map((v) => ({
+          codigoBarra: String(v.CODBARRA).trim(),
+          idProduto: Number(v.CODPROD),
+          codvol: v.CODVOL || null,
+          controle: String(v.CONTROLE ?? ' ').trim() || ' ',
+          quantidade: v.QUANTIDADE != null ? Number(v.QUANTIDADE) : null,
+          divideMult: v.DIVIDEMULTIPLICA ?? null,
+          origem: 'VOA',
+        })),
+    ];
+
+    for (let i = 0; i < allCodigos.length; i += 200) {
+      const batch = allCodigos.slice(i, i + 200);
+      await Promise.all(
+        batch.map((c) =>
+          this.prisma.codigoBarrasCache.upsert({
+            where: {
+              codigoBarra_idProduto_controle_origem: {
+                codigoBarra: c.codigoBarra,
+                idProduto: c.idProduto,
+                controle: c.controle,
+                origem: c.origem,
+              },
+            },
+            update: { codvol: c.codvol, quantidade: c.quantidade, divideMult: c.divideMult },
+            create: c,
+          }),
+        ),
+      );
+    }
+
+    const resumo = { produtos: produtoRows.length, imagens: imagensSincronizadas, codigos: allCodigos.length };
+    this.logger.log(`FIM: SINCRONIZAÇÃO - PRODUTOS (${resumo.produtos} produtos, ${resumo.imagens} imagens, ${resumo.codigos} códigos)`);
+    return resumo;
   }
 }

@@ -75,7 +75,13 @@ export class PostAtualizarDimensoesVolumeNaoDetalhadoLoteParams extends OmitType
   pesoAntigo?: number;
 }
 
-export class PostAtualizarDimensoesVolumeParams extends PostAtualizarDimensoesVolumeNaoDetalhadoLoteParams {}
+export class PostAtualizarDimensoesVolumeParams extends PostAtualizarDimensoesVolumeNaoDetalhadoLoteParams {
+  @ApiProperty({ example: 1 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  qtdVol?: number;
+}
 
 export class GerarVolumesLoteParams extends OmitType(
   PostAtualizarDimensoesVolumeDetalhadoParams,

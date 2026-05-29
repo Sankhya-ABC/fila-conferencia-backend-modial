@@ -1,40 +1,28 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { NumeroConferenciaFilter } from '../dto/model';
-import { VolumeHelper } from './volume.helper';
-import { SankhyaDBExplorerSPClient } from 'src/http-client/db-explorer-sp/db-explorer-sp.client';
-import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
 import {
   DeletarVolumesLoteParams,
   GerarVolumesLoteParams,
   PostAtualizarDimensoesVolumeParams,
 } from './dto/volume.dto';
-import { SeparacaoHelper } from '../separacao/separacao.helper';
+import { SessaoService } from '../sessao/sessao.service';
 
 @Injectable()
 export class VolumeService {
-  constructor(
-    private readonly volumeHelper: VolumeHelper,
-    private readonly separacaoHelper: SeparacaoHelper,
-    private readonly dbExplorerClient: SankhyaDBExplorerSPClient,
-    private readonly datasetSP: SankhyaDatasetSPClient,
-  ) {}
+  constructor(private readonly sessaoService: SessaoService) {}
+
+  private async getSessaoId(numeroConferencia: number): Promise<string> {
+    const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
+    if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
+    return sessao.id;
+  }
 
   async getVolumes({ numeroConferencia }: NumeroConferenciaFilter) {
-    const isCubagemNaoDetalhada = await this.volumeHelper.isCubagemNaoDetalhada(
-      { numeroConferencia },
-    );
-
-    if (isCubagemNaoDetalhada) {
-      return await this.volumeHelper.obterVolumesNaoDetalhados({
-        numeroConferencia,
-      });
-    } else {
-      await this.separacaoHelper.normalizarVolumes(numeroConferencia);
-
-      return await this.volumeHelper.obterVolumesDetalhados({
-        numeroConferencia,
-      });
-    }
+    const sessaoId = await this.getSessaoId(numeroConferencia);
+    const naoDetalhada = await this.sessaoService.isCubagemNaoDetalhada(sessaoId);
+    return naoDetalhada
+      ? this.sessaoService.getVolumesNaoDetalhados(sessaoId)
+      : this.sessaoService.getVolumesDetalhados(sessaoId);
   }
 
   async gerarVolumesLote({
@@ -45,72 +33,15 @@ export class VolumeService {
     comprimento,
     peso,
   }: GerarVolumesLoteParams) {
-    const sql = `
-    SELECT
-      NUCUBAGEM,
-      SEQVOL,
-      ALTURA,
-      LARGURA,
-      COMPRIMENTO,
-      PESO
-    FROM AD_CUBAGEM
-    WHERE NUCONF = ${numeroConferencia}
-    ORDER BY SEQVOL
-  `;
-
-    const rows = await this.dbExplorerClient.executeQuery(sql);
-
-    const linhasVazias = rows.filter(
-      (r) =>
-        r.ALTURA == null &&
-        r.LARGURA == null &&
-        r.COMPRIMENTO == null &&
-        r.PESO == null,
-    );
-
-    let numeroVolume = rows.length
-      ? Math.max(...rows.map((r) => r.SEQVOL || 0)) + 1
-      : 1;
-
-    let restante = quantidadeLote;
-
-    for (const linha of linhasVazias) {
-      if (restante <= 0) break;
-
-      await this.datasetSP.save({
-        entityName: 'AD_CUBAGEM',
-        pk: {
-          NUCUBAGEM: linha.NUCUBAGEM,
-        },
-        fieldsAndValues: {
-          ALTURA: Number(altura),
-          LARGURA: Number(largura),
-          COMPRIMENTO: Number(comprimento),
-          PESO: Number(peso),
-        },
-      });
-
-      restante--;
-    }
-
-    while (restante > 0) {
-      const nucubagem = await this.volumeHelper.obterProximoIdCubagem();
-
-      await this.datasetSP.save({
-        entityName: 'AD_CUBAGEM',
-        fieldsAndValues: {
-          NUCUBAGEM: nucubagem,
-          NUCONF: numeroConferencia,
-          SEQVOL: numeroVolume++,
-          ALTURA: Number(altura),
-          LARGURA: Number(largura),
-          COMPRIMENTO: Number(comprimento),
-          PESO: Number(peso),
-        },
-      });
-
-      restante--;
-    }
+    const sessaoId = await this.getSessaoId(numeroConferencia);
+    await this.sessaoService.criarVolumesLote({
+      sessaoId,
+      quantidade: quantidadeLote,
+      altura,
+      largura,
+      comprimento,
+      peso,
+    });
   }
 
   async deletarVolumesLote({
@@ -120,50 +51,53 @@ export class VolumeService {
     comprimento,
     peso,
   }: DeletarVolumesLoteParams) {
-    const sql = `
-      SELECT NUCUBAGEM
-      FROM AD_CUBAGEM
-      WHERE NUCONF = ${numeroConferencia}
-        AND ALTURA = ${altura}
-        AND LARGURA = ${largura}
-        AND COMPRIMENTO = ${comprimento}
-        AND PESO = ${peso}
-    `;
-
-    const rows = await this.dbExplorerClient.executeQuery(sql);
-
-    for (const row of rows) {
-      await this.datasetSP.save({
-        entityName: 'AD_CUBAGEM',
-        pk: {
-          NUCUBAGEM: row.NUCUBAGEM,
-        },
-        fieldsAndValues: {
-          ALTURA: null,
-          LARGURA: null,
-          COMPRIMENTO: null,
-          PESO: null,
-        },
-      });
-    }
+    const sessaoId = await this.getSessaoId(numeroConferencia);
+    await this.sessaoService.removerVolumesLote({ sessaoId, altura, largura, comprimento, peso });
   }
 
-  async postAtualizarDimensoesVolume(
-    params: PostAtualizarDimensoesVolumeParams,
-  ) {
-    const { numeroConferencia } = params;
-    const isCubagemNaoDetalhada = await this.volumeHelper.isCubagemNaoDetalhada(
-      { numeroConferencia },
-    );
+  async postAtualizarDimensoesVolume({
+    numeroConferencia,
+    numeroVolume,
+    alturaAntiga,
+    larguraAntiga,
+    comprimentoAntigo,
+    pesoAntigo,
+    altura,
+    largura,
+    comprimento,
+    peso,
+    qtdVol,
+  }: PostAtualizarDimensoesVolumeParams) {
+    const sessaoId = await this.getSessaoId(numeroConferencia);
 
-    if (isCubagemNaoDetalhada) {
-      return await this.volumeHelper.postAtualizarDimensoesVolumeNaoDetalhadoLote(
-        params,
-      );
+    if (qtdVol != null) {
+      await this.sessaoService.salvarCubagemSimplificada(sessaoId, { qtdVol, altura, largura, comprimento, peso });
+      return;
+    }
+
+    const naoDetalhada = await this.sessaoService.isCubagemNaoDetalhada(sessaoId);
+
+    if (naoDetalhada) {
+      await this.sessaoService.atualizarDimensoesVolumeLote({
+        sessaoId,
+        alturaAntiga,
+        larguraAntiga,
+        comprimentoAntigo,
+        pesoAntigo,
+        altura,
+        largura,
+        comprimento,
+        peso,
+      });
     } else {
-      return await this.volumeHelper.postAtualizarDimensoesVolumeDetalhado(
-        params,
-      );
+      await this.sessaoService.atualizarDimensoesVolume({
+        sessaoId,
+        seqVol: numeroVolume!,
+        altura,
+        largura,
+        comprimento,
+        peso,
+      });
     }
   }
 }
