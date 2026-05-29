@@ -6,13 +6,15 @@ RUN apt-get update && apt-get install -y openssl ca-certificates bash curl pytho
 
 COPY package*.json ./
 
-RUN npm install
+RUN npm ci
 
 COPY . .
 
 RUN npx prisma generate
 
 RUN npm run build
+
+RUN npm prune --omit=dev
 
 EXPOSE 3000
 

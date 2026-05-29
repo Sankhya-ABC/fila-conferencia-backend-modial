@@ -19,7 +19,8 @@ services:
     command: sh -c "npx prisma generate && npx prisma migrate deploy && npm run start:dev"
 
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   db:
     image: postgres:15
@@ -36,6 +37,12 @@ services:
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fila_conferencia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:

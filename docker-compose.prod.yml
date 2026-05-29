@@ -14,10 +14,14 @@ services:
     env_file:
       - .env
 
+    environment:
+      DATABASE_URL: "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+
     command: sh -c "npx prisma migrate deploy && node dist/src/main"
 
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
   db:
     image: postgres:15
@@ -31,6 +35,12 @@ services:
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:
