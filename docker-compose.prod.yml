@@ -14,7 +14,7 @@ services:
     env_file:
       - .env
 
-    command: sh -c "npx prisma migrate deploy && node dist/main"
+    command: sh -c "npx prisma migrate deploy && node dist/src/main"
 
     depends_on:
       - db
