@@ -118,8 +118,10 @@ export class ConferenciaHelper {
           STATUS: 'A',
         },
       });
-    } catch {
-      throw new BadRequestException('Erro ao criar cabeçalho da conferência.');
+    } catch (err: any) {
+      const detalhe = err?.response?.data ?? err?.message ?? String(err);
+      console.error('[atualizarCabecalhoConferencia] erro Sankhya:', JSON.stringify(detalhe));
+      throw new BadRequestException(`Erro ao criar cabeçalho da conferência. Detalhe: ${JSON.stringify(detalhe)}`);
     }
   }
 
