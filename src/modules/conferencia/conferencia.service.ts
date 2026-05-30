@@ -266,15 +266,15 @@ export class ConferenciaService {
       this.conferenciaHelper.obterNumeroConferencia(),
     ]);
 
-    // Reserva o número (sequencial para evitar duplicatas concorrentes)
+    // Reserva o número — único passo obrigatoriamente sequencial (evita race condition)
     await this.conferenciaHelper.atualizarNumeroConferencia({ numeroConferencia });
 
-    // Cria o header no Sankhya (TGFCON2) — obrigatório antes de qualquer coisa
-    await this.conferenciaHelper.atualizarCabecalhoConferencia({ numeroUnico, numeroConferencia, idUsuario });
+    // Tudo que segue é fire-and-forget: a conferência é local, o usuário pode
+    // começar a conferir imediatamente. O recovery na finalização garante que
+    // o TGFCON2 existe — se falhar aqui, será criado lá.
+    this.conferenciaHelper.atualizarCabecalhoConferencia({ numeroUnico, numeroConferencia, idUsuario })
+      .catch((err) => console.warn('[atualizarCabecalhoConferencia] falhou (non-blocking):', err?.message));
 
-    // carregarSessao e atualizarCabecalhoNota rodam em background:
-    // retornamos { numeroConferencia } imediatamente para o frontend não ficar bloqueado.
-    // O frontend faz polling em GET /sessao-pronta até a sessão estar carregada.
     this.conferenciaHelper.carregarSessao({ numeroUnico, numeroConferencia, idUsuario })
       .catch((err) => console.error('[carregarSessao] falhou em background:', err?.message));
 
