@@ -93,17 +93,22 @@ export class SessaoService {
       this.sessaoCache.delete(anterior.id);
     }
 
-    const sessaoCriada = await this.prisma.sessaoConferencia.create({
-      data: {
-        numeroUnico,
-        numeroConferencia,
-        idUsuario,
-        codigoTipoMovimento,
-        descricaoTipoOperacao,
-        buscarCodigoBarraPor,
-        status: 'A',
-        itens: {
-          create: itens.map((item) => ({
+    // Cria sessão + itens + códigos em uma única transação com bulk inserts (createMany)
+    // Muito mais rápido que nested creates individuais para pedidos grandes
+    const sessaoCriada = await this.prisma.$transaction(async (tx) => {
+      const s = await tx.sessaoConferencia.create({
+        data: {
+          numeroUnico, numeroConferencia, idUsuario,
+          codigoTipoMovimento, descricaoTipoOperacao,
+          buscarCodigoBarraPor, status: 'A',
+        },
+        select: { id: true },
+      });
+
+      await Promise.all([
+        tx.sessaoItem.createMany({
+          data: itens.map((item) => ({
+            sessaoId: s.id,
             sequencia: Number(item.SEQUENCIA),
             idProduto: Number(item.CODPROD),
             nomeProduto: item.DESCRPROD || '',
@@ -128,10 +133,11 @@ export class SessaoService {
                   : `data:image/jpeg;base64,${item.IMAGEM}`)
               : null,
           })),
-        },
-        codigos: {
-          create: [
+        }),
+        tx.sessaoCodigoBarras.createMany({
+          data: [
             ...codigos.map((c) => ({
+              sessaoId: s.id,
               codigoBarra: String(c.CODBARRA || c.CODIGO || '').trim(),
               idProduto: Number(c.CODPROD),
               unidade: c.CODVOL || null,
@@ -140,11 +146,13 @@ export class SessaoService {
               divideMult: c.DIVIDEMULTIPLICA || null,
               origem: c.ORIGEM || 'BAR',
             })),
-            { codigoBarra: '__loaded__', idProduto: 0, origem: 'LOADED', controle: ' ' },
+            { sessaoId: s.id, codigoBarra: '__loaded__', idProduto: 0, origem: 'LOADED', controle: ' ' },
           ],
-        },
-      },
-      select: { id: true },
+          skipDuplicates: true,
+        }),
+      ]);
+
+      return s;
     });
 
     // Popula cache a partir dos params (sem query extra ao banco)

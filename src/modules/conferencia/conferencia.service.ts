@@ -188,6 +188,13 @@ export class ConferenciaService {
     return { data, hasNextPage, page, perPage };
   }
 
+  // Verificação leve: só bate no banco local, sem Sankhya.
+  // Usado pelo frontend para polling durante carregamento da sessão em background.
+  async getSessaoPronta({ numeroUnico }: NumeroUnicoFilter) {
+    const sessao = await this.sessaoService.buscarPorNota(Number(numeroUnico));
+    return { pronta: sessao?.status === 'A' };
+  }
+
   async getDadosBasicos({ numeroUnico }: NumeroUnicoFilter) {
     const [raw, sessaoAtiva] = await Promise.all([
       this.loadRecordsClient.loadRecords({
@@ -262,13 +269,15 @@ export class ConferenciaService {
     // Reserva o número (sequencial para evitar duplicatas concorrentes)
     await this.conferenciaHelper.atualizarNumeroConferencia({ numeroConferencia });
 
-    // Cria cabeçalho no Sankhya (TGFCON2) — deve ser sequencial:
-    // carregarSessao só pode rodar depois que o header existir,
-    // caso contrário a sessão local fica orfã (sem TGFCON2 correspondente)
+    // Cria o header no Sankhya (TGFCON2) — obrigatório antes de qualquer coisa
     await this.conferenciaHelper.atualizarCabecalhoConferencia({ numeroUnico, numeroConferencia, idUsuario });
-    await this.conferenciaHelper.carregarSessao({ numeroUnico, numeroConferencia, idUsuario });
 
-    // Vincula a conferência à nota (NUCONFATUAL) — soft-fail: não bloqueia se o Sankhya rejeitar
+    // carregarSessao e atualizarCabecalhoNota rodam em background:
+    // retornamos { numeroConferencia } imediatamente para o frontend não ficar bloqueado.
+    // O frontend faz polling em GET /sessao-pronta até a sessão estar carregada.
+    this.conferenciaHelper.carregarSessao({ numeroUnico, numeroConferencia, idUsuario })
+      .catch((err) => console.error('[carregarSessao] falhou em background:', err?.message));
+
     this.conferenciaHelper.atualizarCabecalhoNota({ numeroUnico, numeroConferencia })
       .catch((err) => console.warn('[atualizarCabecalhoNota] falhou (non-blocking):', err?.message));
 

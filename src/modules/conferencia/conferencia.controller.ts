@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { NoAuthApp } from 'src/core/guards/auth-app/no-auth-app.decorator';
 import { AuthUserGuard } from 'src/core/guards/auth-user/auth-user.guard';
 import { ConferenciaService } from './conferencia.service';
 import {
@@ -25,6 +26,15 @@ export class ConferenciaController {
   @ApiOperation({ summary: 'Dados Básicos do Pedido' })
   getDadosBasicos(@Query() queryParam: NumeroUnicoFilter) {
     return this.service.getDadosBasicos(queryParam);
+  }
+
+  // Endpoint leve: só bate no banco local, sem Sankhya.
+  // Usado pelo frontend para polling durante carregamento da sessão em background.
+  @NoAuthApp()
+  @Get('sessao-pronta')
+  @ApiOperation({ summary: 'Verifica se a sessão local está pronta (sem Sankhya)' })
+  getSessaoPronta(@Query() queryParam: NumeroUnicoFilter) {
+    return this.service.getSessaoPronta(queryParam);
   }
 
   @Post('iniciar-conferencia')
