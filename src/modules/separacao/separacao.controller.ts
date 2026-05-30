@@ -54,6 +54,12 @@ export class SeparacaoController {
     return this.service.getItensPedido(queryParam);
   }
 
+  @Get('imagens-itens')
+  @ApiOperation({ summary: 'Imagens dos itens — lazy load separado dos itens' })
+  getImagensItens(@Query() queryParam: NumeroUnicoFilter) {
+    return this.service.getImagensItens(queryParam);
+  }
+
   @Get('itens-conferidos')
   @ApiOperation({ summary: 'Listar Itens Conferidos' })
   getItensConferidos(@Query() queryParam: NumeroConferenciaFilter) {

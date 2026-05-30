@@ -61,6 +61,12 @@ export class SeparacaoService {
     await this.sessaoService.devolverItem(sessao.id, idProduto, controle);
   }
 
+  async getImagensItens({ numeroUnico }: NumeroUnicoFilter) {
+    const sessao = await this.sessaoService.buscarPorNota(numeroUnico);
+    if (!sessao) return [];
+    return this.sessaoService.getImagensItens(sessao.id);
+  }
+
   async getItensPedido({ numeroUnico }: NumeroUnicoFilter) {
     const sessao = await this.sessaoService.buscarPorNota(numeroUnico);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');

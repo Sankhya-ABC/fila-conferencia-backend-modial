@@ -611,10 +611,25 @@ export class SessaoService {
   // Consultas (lidas pelo frontend via endpoints existentes)
   // ─────────────────────────────────────────────
 
+  // Retorna apenas {idProduto, imagem} sem o restante dos campos — para lazy loading no frontend
+  async getImagensItens(sessaoId: string) {
+    const itens = await this.prisma.sessaoItem.findMany({
+      where: { sessaoId },
+      select: { idProduto: true, imagem: true },
+    });
+    return itens
+      .filter((i) => i.imagem)
+      .map((i) => ({ idProduto: i.idProduto, imagem: i.imagem }));
+  }
+
   async getItensPedido(sessaoId: string) {
-    // itens e codigos em paralelo — imagem já está em item.imagem (gravada no carregarSessao)
+    // Imagens excluídas aqui — são carregadas em lazy load pelo frontend via /imagens-itens
     const [itens, codigos] = await Promise.all([
-      this.prisma.sessaoItem.findMany({ where: { sessaoId }, orderBy: { sequencia: 'asc' } }),
+      this.prisma.sessaoItem.findMany({
+        where: { sessaoId },
+        orderBy: { sequencia: 'asc' },
+        omit: { imagem: true },
+      }),
       this.prisma.sessaoCodigoBarras.findMany({ where: { sessaoId } }),
     ]);
 
@@ -657,7 +672,7 @@ export class SessaoService {
         quantidadeBaseConferida: Number(qtdBaseConferida.toFixed(5)),
         quantidadeConvertidaConferida: Number(qtdConvertidaConferida.toFixed(5)),
         codigoBarras: [...new Set(itemCodigos)],
-        imagem: item.imagem || null,
+        imagem: null, // carregado via lazy load em /separacoes/imagens-itens
         lisControles: item.lisControles ?? null,
       });
     }
