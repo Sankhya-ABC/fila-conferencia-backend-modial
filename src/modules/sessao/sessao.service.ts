@@ -628,7 +628,14 @@ export class SessaoService {
       this.prisma.sessaoItem.findMany({
         where: { sessaoId },
         orderBy: { sequencia: 'asc' },
-        omit: { imagem: true },
+        select: {
+          id: true, sessaoId: true, sequencia: true, idProduto: true,
+          nomeProduto: true, complemento: true, marca: true, referencia: true,
+          unidade: true, controle: true, tipControle: true, decQtd: true,
+          pesoBruto: true, qtdNeg: true, qtdEntregue: true,
+          qtdConferidaSankhya: true, qtdConferidaLocal: true,
+          divideMult: true, fatorConv: true, lisControles: true,
+        },
       }),
       this.prisma.sessaoCodigoBarras.findMany({ where: { sessaoId } }),
     ]);
