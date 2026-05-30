@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { NoAuthApp } from 'src/core/guards/auth-app/no-auth-app.decorator';
 import { AuthUserGuard } from 'src/core/guards/auth-user/auth-user.guard';
 import { NumeroConferenciaFilter } from '../dto/model';
 import { VolumeService } from './volume.service';
@@ -9,6 +10,7 @@ import {
   PostAtualizarDimensoesVolumeParams,
 } from './dto/volume.dto';
 
+@NoAuthApp()
 @UseGuards(AuthUserGuard)
 @ApiTags('Volumes')
 @Controller('volumes')

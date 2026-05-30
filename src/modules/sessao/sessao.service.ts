@@ -612,19 +612,11 @@ export class SessaoService {
   // ─────────────────────────────────────────────
 
   async getItensPedido(sessaoId: string) {
-    const itens = await this.prisma.sessaoItem.findMany({
-      where: { sessaoId },
-      orderBy: { sequencia: 'asc' },
-    });
-
-    const codigos = await this.prisma.sessaoCodigoBarras.findMany({ where: { sessaoId } });
-
-    const idProdutos = [...new Set(itens.map((i) => i.idProduto))];
-    const imagensCache = await this.prisma.produtoCache.findMany({
-      where: { idProduto: { in: idProdutos } },
-      select: { idProduto: true, imagem: true },
-    });
-    const imagensMap = new Map(imagensCache.map((p) => [p.idProduto, p.imagem]));
+    // itens e codigos em paralelo — imagem já está em item.imagem (gravada no carregarSessao)
+    const [itens, codigos] = await Promise.all([
+      this.prisma.sessaoItem.findMany({ where: { sessaoId }, orderBy: { sequencia: 'asc' } }),
+      this.prisma.sessaoCodigoBarras.findMany({ where: { sessaoId } }),
+    ]);
 
     const result: any[] = [];
 
@@ -665,7 +657,7 @@ export class SessaoService {
         quantidadeBaseConferida: Number(qtdBaseConferida.toFixed(5)),
         quantidadeConvertidaConferida: Number(qtdConvertidaConferida.toFixed(5)),
         codigoBarras: [...new Set(itemCodigos)],
-        imagem: imagensMap.get(item.idProduto) || item.imagem || null,
+        imagem: item.imagem || null,
         lisControles: item.lisControles ?? null,
       });
     }
