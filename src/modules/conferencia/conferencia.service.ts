@@ -305,8 +305,8 @@ export class ConferenciaService {
     };
 
     // Recovery: garante que TGFCON2 existe antes de inserir TGFCOI2
-    // Caso o atualizarCabecalhoConferencia tenha falhado durante o init,
-    // a sessão local existe mas o header no Sankhya não — isso causaria FK violation no TGFCOI2
+    // Tenta INSERT; se falhar (já existe ou validação), tenta UPDATE para confirmar existência.
+    // Se ambos falharem, lança erro — sem TGFCON2 o TGFCOI2 quebraria com FK violation.
     await this.datasetSP.save({
       entityName: 'CabecalhoConferencia',
       fieldsAndValues: {
@@ -317,7 +317,17 @@ export class ConferenciaService {
         QTDVOL: 0,
         STATUS: 'A',
       },
-    }).catch(() => { /* já existe — ok */ });
+    }).catch(async () => {
+      await this.datasetSP.save({
+        entityName: 'CabecalhoConferencia',
+        pk: { NUCONF: numeroConferencia },
+        fieldsAndValues: { STATUS: 'A', QTDVOL: 0 },
+      }).catch((e) => {
+        throw new BadRequestException(
+          `Não foi possível garantir o cabeçalho da conferência (TGFCON2) no Sankhya. Detalhe: ${e?.message ?? e}`,
+        );
+      });
+    });
 
     const barcodeMap = new Map<string, string>();
     for (const c of dados.codigos) {
