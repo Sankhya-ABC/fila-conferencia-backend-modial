@@ -22,19 +22,9 @@ export class ConferenciaService {
     const perPage = Number(queryParams.perPage ?? 15);
 
     const parameters: { value: any; type: 'S' | 'I' | 'D' | 'B' }[] = [];
-
-    // Quando 'Z' está no filtro, incluir conferências finalizadas (sem NOT EXISTS)
-    const statusFiltro = (queryParams.codigoStatus ?? '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
-    const incluiFinalizados = statusFiltro.includes('F');
-
     const expressions: string[] = [
       "EXISTS (SELECT 1 FROM TGFTOP TP, TGFCCO CCO WHERE TP.NUCCO = CCO.NUCCO AND TP.CODTIPOPER = TGFCAB.CODTIPOPER AND TP.DHALTER = TGFCAB.DHTIPOPER AND ((CCO.MOMENTOCONFERENCIA = 'C' AND TGFCAB.LIBCONF = 'S') OR (CCO.MOMENTOCONFERENCIA = 'F' AND TGFCAB.STATUSNOTA = 'L')))",
-      // Se F está no filtro, excluir só 'D' (mostra finalizados F também)
-      // Se F não está, excluir 'F' e 'D' (comportamento padrão)
-      incluiFinalizados
-        ? "NOT EXISTS (SELECT 1 FROM TGFCON2 CON2 WHERE CON2.NUCONF = TGFCAB.NUCONFATUAL AND CON2.STATUS IN ('D'))"
-        : "NOT EXISTS (SELECT 1 FROM TGFCON2 CON2 WHERE CON2.NUCONF = TGFCAB.NUCONFATUAL AND CON2.STATUS IN ('F','D'))",
+      "NOT EXISTS (SELECT 1 FROM TGFCON2 CON2 WHERE CON2.NUCONF = TGFCAB.NUCONFATUAL AND CON2.STATUS IN ('F','D'))",
       "EXISTS (SELECT 1 FROM TGFITE ITE WHERE ITE.NUNOTA = TGFCAB.NUNOTA AND EXISTS (SELECT 1 FROM TGFPRO PROD WHERE (PROD.EXCLUIRCONF IS NULL OR PROD.EXCLUIRCONF = 'N') AND PROD.CODPROD = ITE.CODPROD))",
     ];
 
@@ -158,8 +148,7 @@ export class ConferenciaService {
       const nuconf = r.NUCONFATUAL ? Number(r.NUCONFATUAL) : null;
       const statusSankhya = nuconf ? (statusSankhyaMap.get(nuconf) ?? null) : null;
       const temSessaoLocal = activeNums.has(Number(r.NUNOTA));
-      const estaFinalizado = statusSankhya === 'F' || statusSankhya === 'D';
-      const codigoStatus = estaFinalizado ? 'F' : temSessaoLocal ? 'A' : 'AC';
+      const codigoStatus = temSessaoLocal ? 'A' : 'AC';
       return {
         codigoStatus,
         statusSankhya,
