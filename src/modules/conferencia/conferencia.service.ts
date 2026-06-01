@@ -366,22 +366,56 @@ export class ConferenciaService {
         });
       });
 
-      const cubSimp = this.datasetSP.save({
-        entityName: 'AD_CUBAGEM',
-        fieldsAndValues: { NUCONF: numeroConferencia, QTDVOL: dados.qtdVol, ALTURA: dados.altura, LARGURA: dados.largura, COMPRIMENTO: dados.comprimento, PESO: dados.peso },
-      }).catch(async (e) => {
-        await this.datasetSP.save({
-          entityName: 'AD_CUBAGEM',
-          pk: { NUCONF: numeroConferencia },
-          fieldsAndValues: { QTDVOL: dados.qtdVol, ALTURA: dados.altura, LARGURA: dados.largura, COMPRIMENTO: dados.comprimento, PESO: dados.peso },
-        }).catch((e2) => pushErro('Cubagem simplificada', e2 ?? e));
-      });
+      // Agrupa SessaoVolume por dimensões → uma linha AD_CUBAGEM por grupo
+      type GrupoDim = { qtd: number; seqVol: number; altura: number | null; largura: number | null; comprimento: number | null; peso: number | null };
+      const dimMap = new Map<string, GrupoDim>();
+      let seqGrupo = 1;
+      for (const vol of dados.volumes) {
+        const key = `${vol.altura ?? ''}|${vol.largura ?? ''}|${vol.comprimento ?? ''}|${vol.peso ?? ''}`;
+        if (dimMap.has(key)) {
+          dimMap.get(key)!.qtd++;
+        } else {
+          dimMap.set(key, { qtd: 1, seqVol: seqGrupo++, altura: vol.altura, largura: vol.largura, comprimento: vol.comprimento, peso: vol.peso });
+        }
+      }
+      const gruposDim = [...dimMap.values()];
+      const totalVol = gruposDim.length > 0
+        ? gruposDim.reduce((s, g) => s + g.qtd, 0)
+        : dados.qtdVol;
 
-      await Promise.all([...coiSimp, cubSimp]);
+      // AD_CUBAGEM: uma linha por grupo de dimensões (SEQVOL distingue grupos)
+      const cubSimp: Promise<any>[] = gruposDim.length > 0
+        ? gruposDim.map((g) =>
+            this.datasetSP.save({
+              entityName: 'AD_CUBAGEM',
+              fieldsAndValues: { NUCONF: numeroConferencia, SEQVOL: g.seqVol, QTDVOL: g.qtd, ALTURA: g.altura, LARGURA: g.largura, COMPRIMENTO: g.comprimento, PESO: g.peso },
+            }).catch(async (e) => {
+              await this.datasetSP.save({
+                entityName: 'AD_CUBAGEM',
+                pk: { NUCONF: numeroConferencia, SEQVOL: g.seqVol },
+                fieldsAndValues: { QTDVOL: g.qtd, ALTURA: g.altura, LARGURA: g.largura, COMPRIMENTO: g.comprimento, PESO: g.peso },
+              }).catch((e2) => pushErro(`Cubagem grupo ${g.seqVol}`, e2 ?? e));
+            })
+          )
+        : [
+            // Legacy: nenhum SessaoVolume — usa os campos diretos da sessão
+            this.datasetSP.save({
+              entityName: 'AD_CUBAGEM',
+              fieldsAndValues: { NUCONF: numeroConferencia, QTDVOL: dados.qtdVol, ALTURA: dados.altura, LARGURA: dados.largura, COMPRIMENTO: dados.comprimento, PESO: dados.peso },
+            }).catch(async (e) => {
+              await this.datasetSP.save({
+                entityName: 'AD_CUBAGEM',
+                pk: { NUCONF: numeroConferencia },
+                fieldsAndValues: { QTDVOL: dados.qtdVol, ALTURA: dados.altura, LARGURA: dados.largura, COMPRIMENTO: dados.comprimento, PESO: dados.peso },
+              }).catch((e2) => pushErro('Cubagem simplificada', e2 ?? e));
+            }),
+          ];
+
+      await Promise.all([...coiSimp, ...cubSimp]);
 
       await Promise.all([
-        this.datasetSP.save({ entityName: 'CabecalhoConferencia', pk: { NUCONF: numeroConferencia }, fieldsAndValues: { STATUS: 'F', DHFINCONF: dh, QTDVOL: dados.qtdVol } }).catch(() => pushErro('TGFCON2 finalização')),
-        this.datasetSP.save({ entityName: 'CabecalhoNota', pk: { NUNOTA: dados.numeroUnico }, fieldsAndValues: { QTDVOL: dados.qtdVol } }).catch(() => pushErro('TGFCAB QTDVOL')),
+        this.datasetSP.save({ entityName: 'CabecalhoConferencia', pk: { NUCONF: numeroConferencia }, fieldsAndValues: { STATUS: 'F', DHFINCONF: dh, QTDVOL: totalVol } }).catch(() => pushErro('TGFCON2 finalização')),
+        this.datasetSP.save({ entityName: 'CabecalhoNota', pk: { NUNOTA: dados.numeroUnico }, fieldsAndValues: { QTDVOL: totalVol } }).catch(() => pushErro('TGFCAB QTDVOL')),
       ]);
 
       if (erros.length) {
@@ -389,7 +423,7 @@ export class ConferenciaService {
       }
 
       await this.sessaoService.marcarFinalizada(sessao.id);
-      return { qtdVol: dados.qtdVol, numeroConferencia };
+      return { qtdVol: totalVol, numeroConferencia };
     }
 
     // Modo detalhado — fluxo original
