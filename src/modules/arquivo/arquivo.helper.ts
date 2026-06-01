@@ -133,7 +133,7 @@ export class ArquivoHelper {
   private async carregarInfoNota(numeroUnico: number) {
     const raw = await this.loadRecords.loadRecords({
       rootEntity: 'CabecalhoNota',
-      fieldset: 'NUNOTA,NUMNOTA,CODPARC',
+      fieldset: 'NUNOTA,AD_NUMTALAO,CODPARC',
       criteria: {
         expression: 'NUNOTA = ?',
         parameters: [{ value: numeroUnico, type: 'I' }],
@@ -147,7 +147,7 @@ export class ArquivoHelper {
 
     return {
       numeroUnico: r ? Number(r.NUNOTA) : numeroUnico,
-      notaFiscal: r ? Number(r.NUMNOTA) : null,
+      numTalao: r?.AD_NUMTALAO ?? null,
       uf: r?.['Parceiro_UF'] ?? null,
       cliente: r?.['Parceiro_RAZAOSOCIAL'] ?? null,
     };

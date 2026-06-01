@@ -61,16 +61,13 @@ export class ArquivoService {
 
       return {
         cliente: row.cliente,
-        numeroUnico: row.numeroUnico,
-        notaFiscal: row.notaFiscal ? String(row.notaFiscal) : null,
+        numTalao: row.numTalao ?? '',
         uf: row.uf ?? '',
 
-        seqVol,
-        totalVol,
-
-        notaFiscalDigitos: row.notaFiscal ? String(row.notaFiscal).split('') : [],
-        seqVolDigitos: seqVol.split(''),
-        totalVolDigitos: totalVol.split(''),
+        seqVolDig1: seqVol[0] ?? '0',
+        seqVolDig2: seqVol[1] ?? '0',
+        totalVolDig1: totalVol[0] ?? '0',
+        totalVolDig2: totalVol[1] ?? '0',
 
         logoBase64,
       };

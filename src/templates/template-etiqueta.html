@@ -1,99 +1,91 @@
 <!doctype html>
 <html>
-  <head>
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
+<head>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Arial Narrow', Arial, sans-serif; font-weight: bold; }
 
-      body {
-        font-family: 'Arial Narrow', Arial, sans-serif;
-        font-size: 20px;
-        font-weight: bold;
-      }
+@page { size: 425px 283px; margin: 0; }
 
-      @page {
-        size: 425px 283px;
-        margin: 0;
-      }
+.page {
+  position: relative;
+  width: 425px;
+  height: 283px;
+  overflow: hidden;
+  page-break-after: always;
+}
 
-      .page {
-        width: 425px;
-        height: 283px;
-        padding: 14px 10px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        page-break-after: always;
-        overflow: hidden;
-      }
+.f { position: absolute; font-size: 24px; }
+.bottom { display: flex; align-items: flex-end; }
+.center { display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
+.right-bottom { display: flex; align-items: flex-end; justify-content: flex-end; }
 
-      .row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-      }
+.box {
+  position: absolute;
+  border: 1px solid #000;
+  border-radius: 10px;
+}
 
-      .label-nf {
-        margin-bottom: 6px;
-      }
+.digit {
+  position: absolute;
+  border: 1px solid #000;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+}
 
-      .numeros-container {
-        display: flex;
-        gap: 3px;
-        align-items: center;
-        font-size: 26px;
-      }
+.sep {
+  position: absolute;
+  background: #000;
+}
 
-      .numero {
-        width: 44px;
-        height: 64px;
-        border: 1px solid #000;
-        border-radius: 10px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      }
+img { position: absolute; object-fit: contain; padding-left: 5px; }
+</style>
+</head>
+<body>
+{{#each volumes}}
+<div class="page">
 
-      .logo {
-        height: 64px;
-      }
-    </style>
-  </head>
-  <body>
-    {{#each volumes}}
-    <div class="page">
+  <!-- Cliente -->
+  <div class="f bottom" style="left:15px;top:16px;width:395px;height:30px;">Cliente: {{cliente}}</div>
 
-      <p>Cliente: {{cliente}}</p>
+  <!-- Nro. Pedido -->
+  <div class="f bottom" style="left:15px;top:46px;width:283px;height:30px;">Nro. Pedido: {{numTalao}}</div>
 
-      <div class="row">
-        <p>Nro. Pedido: {{numeroUnico}}</p>
-        <p>UF: {{uf}}</p>
-      </div>
+  <!-- UF -->
+  <div class="f right-bottom" style="left:298px;top:46px;width:112px;height:30px;">UF: {{uf}}</div>
 
-      {{#if notaFiscal}}
-      <div class="row label-nf">
-        <p>Nota Fiscal:</p>
-        <div class="numeros-container">
-          {{#each notaFiscalDigitos}}
-          <div class="numero">{{this}}</div>
-          {{/each}}
-        </div>
-      </div>
-      {{/if}}
+  <!-- "Nota Fiscal:" -->
+  <div class="f center" style="left:15px;top:90px;width:75px;height:75px;">Nota<br>Fiscal:</div>
 
-      <div class="row">
-        <img class="logo" src="{{logoBase64}}" alt="Logo" />
-        <div class="numeros-container">
-          {{#each seqVolDigitos}}
-          <div class="numero">{{this}}</div>
-          {{/each}}
-          <span>-</span>
-          {{#each totalVolDigitos}}
-          <div class="numero">{{this}}</div>
-          {{/each}}
-        </div>
-      </div>
+  <!-- NF empty boxes -->
+  <div class="box" style="left:121px;top:90px;width:54px;height:75px;"></div>
+  <div class="box" style="left:180px;top:90px;width:54px;height:75px;"></div>
+  <div class="box" style="left:239px;top:90px;width:54px;height:75px;"></div>
+  <div class="box" style="left:298px;top:90px;width:54px;height:75px;"></div>
+  <div class="box" style="left:356px;top:90px;width:54px;height:75px;"></div>
 
-    </div>
-    {{/each}}
-  </body>
+  <!-- Logo -->
+  <img src="{{logoBase64}}" alt="Logo" style="left:15px;top:185px;width:75px;height:75px;">
+
+  <!-- Vol seq dig1 -->
+  <div class="digit" style="left:150px;top:180px;width:54px;height:75px;">{{seqVolDig1}}</div>
+
+  <!-- Vol seq dig2 -->
+  <div class="digit" style="left:209px;top:180px;width:54px;height:75px;">{{seqVolDig2}}</div>
+
+  <!-- Separador preto -->
+  <div class="sep" style="left:268px;top:208px;width:25px;height:10px;"></div>
+
+  <!-- Total vol dig1 -->
+  <div class="digit" style="left:298px;top:180px;width:54px;height:75px;">{{totalVolDig1}}</div>
+
+  <!-- Total vol dig2 -->
+  <div class="digit" style="left:356px;top:180px;width:54px;height:75px;">{{totalVolDig2}}</div>
+
+</div>
+{{/each}}
+</body>
 </html>
