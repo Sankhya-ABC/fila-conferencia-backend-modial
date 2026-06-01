@@ -6,6 +6,19 @@ import { FilaConferenciaFilter, IniciarConferenciaBody } from './dto/conferencia
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import { SessaoService } from '../sessao/sessao.service';
 
+async function comRetry<T>(fn: () => Promise<T>, tentativas = 3, delayMs = 2000): Promise<T> {
+  let ultimo: any;
+  for (let i = 0; i < tentativas; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      ultimo = e;
+      if (i < tentativas - 1) await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw ultimo;
+}
+
 @Injectable()
 export class ConferenciaService {
   constructor(
@@ -269,17 +282,21 @@ export class ConferenciaService {
     // Reserva o número — único passo obrigatoriamente sequencial (evita race condition)
     await this.conferenciaHelper.atualizarNumeroConferencia({ numeroConferencia });
 
-    // Tudo que segue é fire-and-forget: a conferência é local, o usuário pode
-    // começar a conferir imediatamente. O recovery na finalização garante que
-    // o TGFCON2 existe — se falhar aqui, será criado lá.
-    this.conferenciaHelper.atualizarCabecalhoConferencia({ numeroUnico, numeroConferencia, idUsuario })
-      .catch((err) => console.warn('[atualizarCabecalhoConferencia] falhou (non-blocking):', err?.message));
+    // Cabeçalho no Sankhya: obrigatório antes de liberar a conferência.
+    // Retry 3x com 2s de intervalo — falha de rede transitória não deve bloquear.
+    // Se esgotar as tentativas, lança erro e o número reservado fica órfão
+    // (será reutilizado na próxima obterNumeroConferencia).
+    await comRetry(() =>
+      this.conferenciaHelper.atualizarCabecalhoConferencia({ numeroUnico, numeroConferencia, idUsuario })
+    );
 
+    await comRetry(() =>
+      this.conferenciaHelper.atualizarCabecalhoNota({ numeroUnico, numeroConferencia })
+    );
+
+    // Carregamento da sessão em background — não bloqueia a resposta
     this.conferenciaHelper.carregarSessao({ numeroUnico, numeroConferencia, idUsuario })
       .catch((err) => console.error('[carregarSessao] falhou em background:', err?.message));
-
-    this.conferenciaHelper.atualizarCabecalhoNota({ numeroUnico, numeroConferencia })
-      .catch((err) => console.warn('[atualizarCabecalhoNota] falhou (non-blocking):', err?.message));
 
     return { numeroConferencia };
   }
@@ -427,14 +444,16 @@ export class ConferenciaService {
 
       await Promise.all([...coiSimp, ...cubSimp]);
 
-      await Promise.all([
-        this.datasetSP.save({ entityName: 'CabecalhoConferencia', pk: { NUCONF: numeroConferencia }, fieldsAndValues: { STATUS: 'F', DHFINCONF: dh, QTDVOL: totalVol } }).catch(() => pushErro('TGFCON2 finalização')),
-        this.datasetSP.save({ entityName: 'CabecalhoNota', pk: { NUNOTA: dados.numeroUnico }, fieldsAndValues: { QTDVOL: totalVol } }).catch(() => pushErro('TGFCAB QTDVOL')),
-      ]);
-
       if (erros.length) {
         throw new BadRequestException(`Finalização concluída com erros nos seguintes registros: ${erros.join(', ')}. Os dados locais foram preservados para nova tentativa.`);
       }
+
+      // STATUS='F' obrigatório — retry 3x antes de falhar
+      await comRetry(() =>
+        this.datasetSP.save({ entityName: 'CabecalhoConferencia', pk: { NUCONF: numeroConferencia }, fieldsAndValues: { STATUS: 'F', DHFINCONF: dh, QTDVOL: totalVol } })
+      );
+      this.datasetSP.save({ entityName: 'CabecalhoNota', pk: { NUNOTA: dados.numeroUnico }, fieldsAndValues: { QTDVOL: totalVol } })
+        .catch(() => console.warn('[TGFCAB QTDVOL] falhou (non-blocking)'));
 
       await this.sessaoService.marcarFinalizada(sessao.id);
       return { qtdVol: totalVol, numeroConferencia };
@@ -575,20 +594,20 @@ export class ConferenciaService {
 
     await Promise.all([...ivcPromises, ...coiPromises, ...cubPromises]);
 
-    // 3. Finalizar TGFCON2 + TGFCAB em paralelo
+    // 3. Finalizar TGFCON2 — STATUS='F' obrigatório, retry 3x
     const qtdVol = dados.volumes.length;
-    await Promise.all([
+    await comRetry(() =>
       this.datasetSP.save({
         entityName: 'CabecalhoConferencia',
         pk: { NUCONF: numeroConferencia },
         fieldsAndValues: { STATUS: 'F', DHFINCONF: dh, QTDVOL: qtdVol },
-      }).catch(() => pushErro('TGFCON2 finalização')),
-      this.datasetSP.save({
-        entityName: 'CabecalhoNota',
-        pk: { NUNOTA: dados.numeroUnico },
-        fieldsAndValues: { QTDVOL: qtdVol },
-      }).catch(() => pushErro('TGFCAB QTDVOL')),
-    ]);
+      })
+    );
+    this.datasetSP.save({
+      entityName: 'CabecalhoNota',
+      pk: { NUNOTA: dados.numeroUnico },
+      fieldsAndValues: { QTDVOL: qtdVol },
+    }).catch(() => console.warn('[TGFCAB QTDVOL] falhou (non-blocking)'));
 
     if (erros.length) {
       throw new BadRequestException(
