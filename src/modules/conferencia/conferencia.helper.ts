@@ -209,14 +209,14 @@ export class ConferenciaHelper {
       if (ccoRows.length) buscarCodigoBarraPor = ccoRows[0].BUSCARCODBARRAPOR ?? 'A';
     }
 
-    // Monta mapa VOA por (CODPROD|CODVOL|CONTROLE) e fallback (CODPROD|CONTROLE)
+    // Monta mapa VOA por (CODPROD|CODVOL|CONTROLE)
+    // A conversão só se aplica quando o CODVOL do item bate com o CODVOL do VOA.
+    // Não há fallback por produto — isso aplicaria conversão de CX em itens que estão em UN.
     const voaMap = new Map<string, { codvol: string; divideMult: string | null; quantidade: number | null }>();
-    const voaFallback = new Map<string, { codvol: string; divideMult: string | null; quantidade: number | null }>();
     for (const v of voaRows) {
       const controle = String(v.CONTROLE ?? ' ').trim() || ' ';
       const entry = { codvol: v.CODVOL, divideMult: v.DIVIDEMULTIPLICA ?? null, quantidade: v.QUANTIDADE != null ? Number(v.QUANTIDADE) : null };
       voaMap.set(`${v.CODPROD}|${v.CODVOL}|${controle}`, entry);
-      if (!voaFallback.has(`${v.CODPROD}|${controle}`)) voaFallback.set(`${v.CODPROD}|${controle}`, entry);
     }
 
     // Normaliza itens (exclui produtos marcados EXCLUIRCONF=S)
@@ -224,8 +224,7 @@ export class ConferenciaHelper {
       .filter((item) => (item['Produto_EXCLUIRCONF'] ?? 'N') !== 'S')
       .map((item) => {
         const controle = String(item.CONTROLE ?? ' ').trim() || ' ';
-        const voa = voaMap.get(`${item.CODPROD}|${item.CODVOL}|${controle}`)
-                 ?? voaFallback.get(`${item.CODPROD}|${controle}`);
+        const voa = voaMap.get(`${item.CODPROD}|${item.CODVOL}|${controle}`) ?? null;
         return {
           SEQUENCIA: item.SEQUENCIA,
           CODPROD: item.CODPROD,
