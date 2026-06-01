@@ -75,13 +75,14 @@ export class SessaoService {
     idUsuario: number;
     codigoTipoMovimento?: string;
     descricaoTipoOperacao?: string;
+    formacaoVolumes?: string | null;
     buscarCodigoBarraPor?: string;
     itens: any[];
     codigos: any[];
   }) {
     const {
       numeroUnico, numeroConferencia, idUsuario,
-      codigoTipoMovimento, descricaoTipoOperacao,
+      codigoTipoMovimento, descricaoTipoOperacao, formacaoVolumes,
       buscarCodigoBarraPor = 'A',
       itens, codigos,
     } = params;
@@ -99,7 +100,7 @@ export class SessaoService {
       const s = await tx.sessaoConferencia.create({
         data: {
           numeroUnico, numeroConferencia, idUsuario,
-          codigoTipoMovimento, descricaoTipoOperacao,
+          codigoTipoMovimento, descricaoTipoOperacao, formacaoVolumes,
           buscarCodigoBarraPor, status: 'A',
         },
         select: { id: true },
@@ -582,9 +583,7 @@ export class SessaoService {
     peso?: number;
   }) {
     const { sessaoId, ...dims } = params;
-    const vol = await this.prisma.sessaoVolume.findFirst({ where: { sessaoId, ...dims } });
-    if (!vol) return;
-    await this.removerVolume(sessaoId, vol.seqVol);
+    await this.prisma.sessaoVolume.deleteMany({ where: { sessaoId, ...dims } });
   }
 
   private async limparVolumesVazios(sessaoId: string) {
@@ -785,7 +784,7 @@ export class SessaoService {
 
   async isCubagemNaoDetalhada(sessaoId: string) {
     const sessao = await this.prisma.sessaoConferencia.findUnique({ where: { id: sessaoId } });
-    return sessao?.codigoTipoMovimento === 'P' && sessao?.descricaoTipoOperacao === 'CUBAGEM DE PEDIDO';
+    return sessao?.formacaoVolumes === 'T' || sessao?.formacaoVolumes === 'S';
   }
 
   async atualizarDimensoesVolumeLote(params: {

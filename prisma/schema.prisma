@@ -60,6 +60,7 @@ model SessaoConferencia {
   idUsuario             Int
   codigoTipoMovimento   String?
   descricaoTipoOperacao String?
+  formacaoVolumes       String?
   buscarCodigoBarraPor  String   @default("A")
   status                String   @default("A")
   criadoEm              DateTime @default(now())

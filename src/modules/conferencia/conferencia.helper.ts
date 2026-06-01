@@ -192,7 +192,7 @@ export class ConferenciaHelper {
     const ccoPromise = nucco != null
       ? this.loadRecords.loadRecords({
           rootEntity: 'ConfiguracaoConferencia',
-          fieldset: 'BUSCARCODBARRAPOR',
+          fieldset: 'BUSCARCODBARRAPOR,FORMACAOVOLUMES',
           criteria: { expression: 'NUCCO = ?', parameters: [{ value: Number(nucco), type: 'I' }] },
           limit: 1,
         }).catch(() => null)
@@ -204,9 +204,13 @@ export class ConferenciaHelper {
 
     // Determina regra de busca de código de barras
     let buscarCodigoBarraPor = 'A';
+    let formacaoVolumes: string | null = null;
     if (ccoRaw) {
       const ccoRows = this.loadRecords.parseEntities(ccoRaw);
-      if (ccoRows.length) buscarCodigoBarraPor = ccoRows[0].BUSCARCODBARRAPOR ?? 'A';
+      if (ccoRows.length) {
+        buscarCodigoBarraPor = ccoRows[0].BUSCARCODBARRAPOR ?? 'A';
+        formacaoVolumes = ccoRows[0].FORMACAOVOLUMES ?? null;
+      }
     }
 
     // Monta mapa VOA por (CODPROD|CODVOL|CONTROLE)
@@ -309,7 +313,7 @@ export class ConferenciaHelper {
 
     await this.sessaoService.criarSessao({
       numeroUnico, numeroConferencia, idUsuario,
-      codigoTipoMovimento, descricaoTipoOperacao, buscarCodigoBarraPor,
+      codigoTipoMovimento, descricaoTipoOperacao, formacaoVolumes, buscarCodigoBarraPor,
       itens, codigos,
     });
   }
