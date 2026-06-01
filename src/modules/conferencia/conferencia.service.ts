@@ -379,12 +379,14 @@ export class ConferenciaService {
         }
       }
       const gruposDim = [...dimMap.values()];
-      const totalVol = gruposDim.length > 0
-        ? gruposDim.reduce((s, g) => s + g.qtd, 0)
-        : dados.qtdVol;
-
-      // AD_CUBAGEM: pré-salvo pelo endpoint grupo-simplificado (modo T/S) — não reinserir
+      // Modo T/S: totalVol vem sempre do qtdVol acumulado via postSalvarGrupoSimplificado.
+      // gruposDim pode ter volumes criados pelo scan (garantirVolume) sem dimensões — ignorar.
       const cubPreSalvo = dados.formacaoVolumes === 'T' || dados.formacaoVolumes === 'S';
+      const totalVol = cubPreSalvo
+        ? dados.qtdVol
+        : gruposDim.length > 0
+          ? gruposDim.reduce((s, g) => s + g.qtd, 0)
+          : dados.qtdVol;
       const cubSimp: Promise<any>[] = cubPreSalvo
         ? []
         : gruposDim.length > 0
