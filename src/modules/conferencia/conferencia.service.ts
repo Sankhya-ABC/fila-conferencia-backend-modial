@@ -26,7 +26,7 @@ export class ConferenciaService {
     // Quando 'Z' está no filtro, incluir conferências finalizadas (sem NOT EXISTS)
     const statusFiltro = (queryParams.codigoStatus ?? '')
       .split(',').map((s) => s.trim()).filter(Boolean);
-    const incluiFinalizados = statusFiltro.includes('Z');
+    const incluiFinalizados = statusFiltro.includes('F');
 
     const expressions: string[] = [
       "EXISTS (SELECT 1 FROM TGFTOP TP, TGFCCO CCO WHERE TP.NUCCO = CCO.NUCCO AND TP.CODTIPOPER = TGFCAB.CODTIPOPER AND TP.DHALTER = TGFCAB.DHTIPOPER AND ((CCO.MOMENTOCONFERENCIA = 'C' AND TGFCAB.LIBCONF = 'S') OR (CCO.MOMENTOCONFERENCIA = 'F' AND TGFCAB.STATUSNOTA = 'L')))",
@@ -155,7 +155,7 @@ export class ConferenciaService {
       const statusSankhya = nuconf ? (statusSankhyaMap.get(nuconf) ?? null) : null;
       const temSessaoLocal = activeNums.has(Number(r.NUNOTA));
       const estaFinalizado = statusSankhya === 'F' || statusSankhya === 'D';
-      const codigoStatus = estaFinalizado ? 'Z' : temSessaoLocal ? 'A' : 'AC';
+      const codigoStatus = estaFinalizado ? 'F' : temSessaoLocal ? 'A' : 'AC';
       return {
         codigoStatus,
         statusSankhya,
