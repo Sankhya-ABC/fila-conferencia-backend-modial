@@ -832,6 +832,13 @@ export class SessaoService {
     });
   }
 
+  async incrementarQtdVolSimplificado(sessaoId: string, qtdVol: number) {
+    await this.prisma.sessaoConferencia.update({
+      where: { id: sessaoId },
+      data: { qtdVol: { increment: qtdVol } },
+    });
+  }
+
   async salvarCubagemSimplificada(sessaoId: string, params: {
     qtdVol: number;
     altura?: number;

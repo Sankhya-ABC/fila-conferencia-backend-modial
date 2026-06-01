@@ -383,33 +383,35 @@ export class ConferenciaService {
         ? gruposDim.reduce((s, g) => s + g.qtd, 0)
         : dados.qtdVol;
 
-      // AD_CUBAGEM: uma linha por grupo de dimensões (SEQVOL distingue grupos)
-      const cubSimp: Promise<any>[] = gruposDim.length > 0
-        ? gruposDim.map((g) =>
-            this.datasetSP.save({
-              entityName: 'AD_CUBAGEM',
-              fieldsAndValues: { NUCONF: numeroConferencia, SEQVOL: g.seqVol, QTDVOL: g.qtd, ALTURA: g.altura, LARGURA: g.largura, COMPRIMENTO: g.comprimento, PESO: g.peso },
-            }).catch(async (e) => {
-              await this.datasetSP.save({
+      // AD_CUBAGEM: pré-salvo pelo endpoint grupo-simplificado (modo T/S) — não reinserir
+      const cubPreSalvo = dados.formacaoVolumes === 'T' || dados.formacaoVolumes === 'S';
+      const cubSimp: Promise<any>[] = cubPreSalvo
+        ? []
+        : gruposDim.length > 0
+          ? gruposDim.map((g) =>
+              this.datasetSP.save({
                 entityName: 'AD_CUBAGEM',
-                pk: { NUCONF: numeroConferencia, SEQVOL: g.seqVol },
-                fieldsAndValues: { QTDVOL: g.qtd, ALTURA: g.altura, LARGURA: g.largura, COMPRIMENTO: g.comprimento, PESO: g.peso },
-              }).catch((e2) => pushErro(`Cubagem grupo ${g.seqVol}`, e2 ?? e));
-            })
-          )
-        : [
-            // Legacy: nenhum SessaoVolume — usa os campos diretos da sessão
-            this.datasetSP.save({
-              entityName: 'AD_CUBAGEM',
-              fieldsAndValues: { NUCONF: numeroConferencia, QTDVOL: dados.qtdVol, ALTURA: dados.altura, LARGURA: dados.largura, COMPRIMENTO: dados.comprimento, PESO: dados.peso },
-            }).catch(async (e) => {
-              await this.datasetSP.save({
+                fieldsAndValues: { NUCONF: numeroConferencia, SEQVOL: g.seqVol, QTDVOL: g.qtd, ALTURA: g.altura, LARGURA: g.largura, COMPRIMENTO: g.comprimento, PESO: g.peso },
+              }).catch(async (e) => {
+                await this.datasetSP.save({
+                  entityName: 'AD_CUBAGEM',
+                  pk: { NUCONF: numeroConferencia, SEQVOL: g.seqVol },
+                  fieldsAndValues: { QTDVOL: g.qtd, ALTURA: g.altura, LARGURA: g.largura, COMPRIMENTO: g.comprimento, PESO: g.peso },
+                }).catch((e2) => pushErro(`Cubagem grupo ${g.seqVol}`, e2 ?? e));
+              })
+            )
+          : [
+              this.datasetSP.save({
                 entityName: 'AD_CUBAGEM',
-                pk: { NUCONF: numeroConferencia },
-                fieldsAndValues: { QTDVOL: dados.qtdVol, ALTURA: dados.altura, LARGURA: dados.largura, COMPRIMENTO: dados.comprimento, PESO: dados.peso },
-              }).catch((e2) => pushErro('Cubagem simplificada', e2 ?? e));
-            }),
-          ];
+                fieldsAndValues: { NUCONF: numeroConferencia, QTDVOL: dados.qtdVol, ALTURA: dados.altura, LARGURA: dados.largura, COMPRIMENTO: dados.comprimento, PESO: dados.peso },
+              }).catch(async (e) => {
+                await this.datasetSP.save({
+                  entityName: 'AD_CUBAGEM',
+                  pk: { NUCONF: numeroConferencia },
+                  fieldsAndValues: { QTDVOL: dados.qtdVol, ALTURA: dados.altura, LARGURA: dados.largura, COMPRIMENTO: dados.comprimento, PESO: dados.peso },
+                }).catch((e2) => pushErro('Cubagem simplificada', e2 ?? e));
+              }),
+            ];
 
       await Promise.all([...coiSimp, ...cubSimp]);
 

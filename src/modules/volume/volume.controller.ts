@@ -8,6 +8,7 @@ import {
   DeletarVolumesLoteParams,
   PostAtualizarDimensoesVolumeDetalhadoParams,
   PostAtualizarDimensoesVolumeParams,
+  PostSalvarGrupoSimplificadoParams,
 } from './dto/volume.dto';
 
 @NoAuthApp()
@@ -40,5 +41,11 @@ export class VolumeController {
     @Body() body: PostAtualizarDimensoesVolumeParams,
   ) {
     return this.service.postAtualizarDimensoesVolume(body);
+  }
+
+  @Post('grupo-simplificado')
+  @ApiOperation({ summary: 'Salvar grupo de volumes simplificado em AD_CUBAGEM' })
+  postSalvarGrupoSimplificado(@Body() body: PostSalvarGrupoSimplificadoParams) {
+    return this.service.salvarGrupoSimplificado(body);
   }
 }

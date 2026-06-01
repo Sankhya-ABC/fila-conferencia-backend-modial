@@ -98,3 +98,41 @@ export class DeletarVolumesLoteParams extends OmitType(
   PostAtualizarDimensoesVolumeDetalhadoParams,
   ['numeroVolume'],
 ) {}
+
+export class PostSalvarGrupoSimplificadoParams {
+  @ApiProperty({ example: 1234 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  numeroConferencia: number;
+
+  @ApiProperty({ example: 3 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  qtdVol: number;
+
+  @ApiProperty({ example: 30 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  largura: number;
+
+  @ApiProperty({ example: 40 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  comprimento: number;
+
+  @ApiProperty({ example: 50 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  altura: number;
+
+  @ApiProperty({ example: 2.5 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  peso: number;
+}

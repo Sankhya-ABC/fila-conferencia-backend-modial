@@ -4,12 +4,17 @@ import {
   DeletarVolumesLoteParams,
   GerarVolumesLoteParams,
   PostAtualizarDimensoesVolumeParams,
+  PostSalvarGrupoSimplificadoParams,
 } from './dto/volume.dto';
 import { SessaoService } from '../sessao/sessao.service';
+import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
 
 @Injectable()
 export class VolumeService {
-  constructor(private readonly sessaoService: SessaoService) {}
+  constructor(
+    private readonly sessaoService: SessaoService,
+    private readonly datasetSP: SankhyaDatasetSPClient,
+  ) {}
 
   private async getSessaoId(numeroConferencia: number): Promise<string> {
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
@@ -53,6 +58,30 @@ export class VolumeService {
   }: DeletarVolumesLoteParams) {
     const sessaoId = await this.getSessaoId(numeroConferencia);
     await this.sessaoService.removerVolumesLote({ sessaoId, altura, largura, comprimento, peso });
+  }
+
+  async salvarGrupoSimplificado({
+    numeroConferencia,
+    qtdVol,
+    largura,
+    comprimento,
+    altura,
+    peso,
+  }: PostSalvarGrupoSimplificadoParams) {
+    const sessaoId = await this.getSessaoId(numeroConferencia);
+
+    await this.datasetSP.save({
+      entityName: 'AD_CUBAGEM',
+      fieldsAndValues: { NUCONF: numeroConferencia, QTDVOL: qtdVol, LARGURA: largura, COMPRIMENTO: comprimento, ALTURA: altura, PESO: peso },
+    }).catch(async () => {
+      await this.datasetSP.save({
+        entityName: 'AD_CUBAGEM',
+        pk: { NUCONF: numeroConferencia },
+        fieldsAndValues: { QTDVOL: qtdVol, LARGURA: largura, COMPRIMENTO: comprimento, ALTURA: altura, PESO: peso },
+      });
+    });
+
+    await this.sessaoService.incrementarQtdVolSimplificado(sessaoId, qtdVol);
   }
 
   async postAtualizarDimensoesVolume({
