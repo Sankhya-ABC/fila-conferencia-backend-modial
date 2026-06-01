@@ -833,10 +833,11 @@ export class SessaoService {
   }
 
   async incrementarQtdVolSimplificado(sessaoId: string, qtdVol: number) {
-    await this.prisma.sessaoConferencia.update({
-      where: { id: sessaoId },
-      data: { qtdVol: { increment: qtdVol } },
-    });
+    await this.prisma.$executeRaw`
+      UPDATE "SessaoConferencia"
+      SET "qtdVol" = COALESCE("qtdVol", 0) + ${qtdVol}
+      WHERE id = ${sessaoId}
+    `;
   }
 
   async salvarCubagemSimplificada(sessaoId: string, params: {
