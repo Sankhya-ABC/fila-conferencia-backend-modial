@@ -65,6 +65,15 @@ export class SessaoService {
     return new Set(sessoes.map((s) => s.numeroUnico));
   }
 
+  async listarSessionsFinalizadas(): Promise<{ numeroUnico: number; numeroConferencia: number }[]> {
+    const sessoes = await this.prisma.sessaoConferencia.findMany({
+      where: { status: 'F' },
+      select: { numeroUnico: true, numeroConferencia: true },
+      orderBy: { criadoEm: 'desc' },
+    });
+    return sessoes;
+  }
+
   // ─────────────────────────────────────────────
   // Criação de sessão (chamado no iniciar-conferencia)
   // ─────────────────────────────────────────────

@@ -190,12 +190,65 @@ export class ConferenciaService {
       (d.numeroConferencia === null && !nunotasComConfOrfa.has(d.numeroUnico)),
     );
 
-    if (queryParams.codigoStatus) {
-      const statusList = queryParams.codigoStatus
-        .split(',')
-        .map((s) => s.trim())
-        .filter(Boolean);
+    const statusList = (queryParams.codigoStatus ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+
+    if (statusList.length > 0) {
       data = data.filter((d) => statusList.includes(d.codigoStatus));
+    }
+
+    // Finalizados no sistema (status='F'): query separada no banco local + Sankhya
+    // A query principal usa NOT EXISTS que os exclui — buscamos independentemente
+    if (statusList.includes('F')) {
+      try {
+        const finalizadas = await this.sessaoService.listarSessionsFinalizadas();
+        if (finalizadas.length > 0) {
+          const nunotas = finalizadas.map((s) => s.numeroUnico);
+          const nunotaMap = new Map(finalizadas.map((s) => [s.numeroUnico, s.numeroConferencia]));
+
+          const rawFin = await this.loadRecordsClient.loadRecords({
+            rootEntity: 'CabecalhoNota',
+            fieldset: 'NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,AD_NUMTALAO,AD_TIPOENTREGA,CODVEND',
+            criteria: { expression: `NUNOTA IN (${nunotas.join(',')})` },
+            joins: [
+              { path: 'Parceiro', fieldset: 'NOMEPARC' },
+              { path: 'TipoOperacao', fieldset: 'DESCROPER' },
+              { path: 'Vendedor', fieldset: 'APELIDO' },
+            ],
+            limit: 200,
+          }).catch(() => null);
+
+          if (rawFin) {
+            const finRows = this.loadRecordsClient.parseEntities(rawFin);
+            let finData = finRows.map((r) => ({
+              codigoStatus: 'F',
+              statusSankhya: 'F',
+              emAndamentoNativo: false,
+              numeroUnico: Number(r.NUNOTA),
+              numeroNota: Number(r.NUMNOTA),
+              numeroConferencia: nunotaMap.get(Number(r.NUNOTA)) ?? null,
+              idParceiro: Number(r.CODPARC),
+              nomeParceiro: r['Parceiro_NOMEPARC'] ?? null,
+              idEmpresa: Number(r.CODEMP),
+              codigoTipoMovimento: r.TIPMOV,
+              codigoTipoOperacao: r.CODTIPOPER ? Number(r.CODTIPOPER) : null,
+              descricaoTipoOperacao: r['TipoOperacao_DESCROPER'] ?? null,
+              dataMovimento: r.DTNEG,
+              AD_NUMTALAO: r.AD_NUMTALAO ?? null,
+              AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
+              apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
+            }));
+
+            // Aplica filtros de texto/número dos query params
+            if (queryParams.numeroNota) finData = finData.filter(d => d.numeroNota === Number(queryParams.numeroNota));
+            if (queryParams.numeroUnico) finData = finData.filter(d => d.numeroUnico === Number(queryParams.numeroUnico));
+            if (queryParams.idParceiro) finData = finData.filter(d => d.idParceiro === Number(queryParams.idParceiro));
+            if (queryParams.idEmpresa) finData = finData.filter(d => d.idEmpresa === Number(queryParams.idEmpresa));
+
+            data = [...data, ...finData];
+          }
+        }
+      } catch { /* soft-fail — não bloqueia a fila */ }
     }
 
     return { data, hasNextPage, page, perPage };
