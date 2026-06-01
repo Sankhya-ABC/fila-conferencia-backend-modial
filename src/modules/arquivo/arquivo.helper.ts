@@ -65,7 +65,6 @@ export class ArquivoHelper {
       const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
       if (!sessao) return [];
 
-      // Volumes com dimensões preenchidas (banco local)
       const volumesComDim = await this.prisma.sessaoVolume.findMany({
         where: {
           sessaoId: sessao.id,
@@ -80,9 +79,18 @@ export class ArquivoHelper {
         select: { seqVol: true },
       });
 
-      if (!volumesComDim.length) return [];
-
       const notaInfo = await this.carregarInfoNota(sessao.numeroUnico);
+
+      // Novo fluxo simplificado: grupos enviados direto ao Sankhya (sem SessaoVolume).
+      // Usa qtdVol da sessão para gerar o número correto de etiquetas.
+      if (!volumesComDim.length) {
+        const qtdVol = sessao.qtdVol ?? 0;
+        if (!qtdVol) return [];
+        return Array.from({ length: qtdVol }, (_, i) => ({
+          seqVol: i + 1,
+          ...notaInfo,
+        }));
+      }
 
       return volumesComDim.map((v) => ({
         seqVol: v.seqVol,
