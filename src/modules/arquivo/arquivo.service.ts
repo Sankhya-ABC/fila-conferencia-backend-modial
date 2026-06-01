@@ -62,13 +62,13 @@ export class ArquivoService {
       return {
         cliente: row.cliente,
         numeroUnico: row.numeroUnico,
-        notaFiscal: String(row.notaFiscal),
+        notaFiscal: row.notaFiscal ? String(row.notaFiscal) : null,
         uf: row.uf ?? '',
 
         seqVol,
         totalVol,
 
-        notaFiscalDigitos: String(row.notaFiscal).split(''),
+        notaFiscalDigitos: row.notaFiscal ? String(row.notaFiscal).split('') : [],
         seqVolDigitos: seqVol.split(''),
         totalVolDigitos: totalVol.split(''),
 
@@ -88,7 +88,8 @@ export class ArquivoService {
     });
 
     const pdfUint8 = await page.pdf({
-      format: 'A4',
+      width: '425px',
+      height: '283px',
       printBackground: true,
     });
 
