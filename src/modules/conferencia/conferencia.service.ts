@@ -253,7 +253,9 @@ export class ConferenciaService {
       } catch { /* soft-fail — não bloqueia a fila */ }
     }
 
-    return { data, hasNextPage, page, perPage };
+    // hasNextPage só é válido se o resultado filtrado encheu a página;
+    // caso contrário o filtro pós-Sankhya reduziu os itens e não há próxima página real
+    return { data, hasNextPage: hasNextPage && data.length >= perPage, page, perPage };
   }
 
   // Verificação leve: só bate no banco local, sem Sankhya.

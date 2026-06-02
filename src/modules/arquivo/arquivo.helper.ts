@@ -147,29 +147,23 @@ export class ArquivoHelper {
     let razaoSocial: string | null = null;
     let uf: string | null = null;
 
-    // Chamada 2: parceiro direto por CODPARC (sem join, padrão comprovado)
+    // Chamada 2: parceiro — RAZAOSOCIAL separado de UF para evitar falha silenciosa
+    // (Sankhya retorna HTTP 200 com body de erro para campos inválidos, não lança exceção)
     if (codParc) {
       const parcRaw = await this.loadRecords.loadRecords({
         rootEntity: 'Parceiro',
-        fieldset: 'RAZAOSOCIAL,UF',
+        fieldset: 'RAZAOSOCIAL',
         criteria: { expression: `CODPARC = ${codParc}` },
+        joins: [{ path: 'Cidade', fieldset: 'UF' }],
         limit: 1,
-      }).catch(async () => {
-        // UF pode não existir na entidade — tenta só RAZAOSOCIAL
-        return this.loadRecords.loadRecords({
-          rootEntity: 'Parceiro',
-          fieldset: 'RAZAOSOCIAL',
-          criteria: { expression: `CODPARC = ${codParc}` },
-          limit: 1,
-        }).catch(() => null);
-      });
+      }).catch(() => null);
 
       if (parcRaw) {
         const parcRows = this.loadRecords.parseEntities(parcRaw);
         const parc = parcRows[0];
         console.log('[etiqueta] parc:', JSON.stringify(parc));
         razaoSocial = parc?.RAZAOSOCIAL ?? null;
-        uf = parc?.UF ?? null;
+        uf = parc?.['Cidade_UF'] ?? null;
       }
     }
 
