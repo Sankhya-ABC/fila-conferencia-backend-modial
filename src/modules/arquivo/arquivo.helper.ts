@@ -147,8 +147,7 @@ export class ArquivoHelper {
     let razaoSocial: string | null = null;
     let uf: string | null = null;
 
-    // Chamada 2: parceiro — RAZAOSOCIAL separado de UF para evitar falha silenciosa
-    // (Sankhya retorna HTTP 200 com body de erro para campos inválidos, não lança exceção)
+    // Chamada 2: parceiro — RAZAOSOCIAL + código numérico da UF via join Cidade
     if (codParc) {
       const parcRaw = await this.loadRecords.loadRecords({
         rootEntity: 'Parceiro',
@@ -163,7 +162,22 @@ export class ArquivoHelper {
         const parc = parcRows[0];
         console.log('[etiqueta] parc:', JSON.stringify(parc));
         razaoSocial = parc?.RAZAOSOCIAL ?? null;
-        uf = parc?.['Cidade_UF'] ?? null;
+        const coduf = parc?.['Cidade_UF'] ?? null;
+
+        // Chamada 3: sigla da UF via UnidadeFederativa (Cidade_UF é o código numérico)
+        if (coduf) {
+          const ufRaw = await this.loadRecords.loadRecords({
+            rootEntity: 'UnidadeFederativa',
+            fieldset: 'UF',
+            criteria: { expression: `CODUF = ${coduf}` },
+            limit: 1,
+          }).catch(() => null);
+
+          if (ufRaw) {
+            const ufRows = this.loadRecords.parseEntities(ufRaw);
+            uf = ufRows[0]?.UF ?? null;
+          }
+        }
       }
     }
 
