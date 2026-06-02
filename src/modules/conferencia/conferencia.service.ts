@@ -5,6 +5,7 @@ import { ConferenciaHelper } from './conferencia.helper';
 import { FilaConferenciaFilter, IniciarConferenciaBody } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import { SessaoService } from '../sessao/sessao.service';
+import { PrismaService } from 'prisma/prisma.service';
 
 async function comRetry<T>(fn: () => Promise<T>, tentativas = 3, delayMs = 2000): Promise<T> {
   let ultimo: any;
@@ -26,6 +27,7 @@ export class ConferenciaService {
     private readonly conferenciaHelper: ConferenciaHelper,
     private readonly datasetSP: SankhyaDatasetSPClient,
     private readonly sessaoService: SessaoService,
+    private readonly prisma: PrismaService,
   ) {}
 
   // ─── Fila (LoadRecords + status do banco local) ────────────────────────────
@@ -356,12 +358,39 @@ export class ConferenciaService {
 
   // ─── Finalizar (batch-write de tudo para o Sankhya) ──────────────────────
 
+  private async atualizarObservacaoNota(numeroUnico: number, nomeUsuario: string): Promise<void> {
+    const novaLinha = `Pedido Separado por:${nomeUsuario}`;
+
+    const raw = await this.loadRecordsClient.loadRecords({
+      rootEntity: 'CabecalhoNota',
+      fieldset: 'OBSERVACAO',
+      criteria: {
+        expression: 'NUNOTA = ?',
+        parameters: [{ value: numeroUnico, type: 'I' }],
+      },
+      limit: 1,
+    });
+
+    const rows = this.loadRecordsClient.parseEntities(raw);
+    const obsAtual = (rows[0]?.OBSERVACAO ?? '').trim();
+    const novaObs = obsAtual ? `${obsAtual}\n${novaLinha}` : novaLinha;
+
+    await this.datasetSP.save({
+      entityName: 'CabecalhoNota',
+      pk: { NUNOTA: numeroUnico },
+      fieldsAndValues: { OBSERVACAO: novaObs },
+    });
+  }
+
   async postFinalizarConferencia({ numeroConferencia }: NumeroConferenciaFilter) {
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
 
     const dados = await this.sessaoService.getDadosFinalizacao(sessao.id);
     if (!dados) throw new BadRequestException('Dados da sessão não encontrados.');
+
+    const usuarioDb = await this.prisma.user.findFirst({ where: { codigo: sessao.idUsuario } });
+    const nomeUsuario = usuarioDb?.nome ?? String(sessao.idUsuario);
 
     const now = new Date();
     const date = now.toISOString().slice(0, 10).split('-').reverse().join('/');
@@ -507,6 +536,9 @@ export class ConferenciaService {
       );
       this.datasetSP.save({ entityName: 'CabecalhoNota', pk: { NUNOTA: dados.numeroUnico }, fieldsAndValues: { QTDVOL: totalVol } })
         .catch(() => console.warn('[TGFCAB QTDVOL] falhou (non-blocking)'));
+
+      await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario)
+        .catch(() => console.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
 
       await this.sessaoService.marcarFinalizada(sessao.id);
       return { qtdVol: totalVol, numeroConferencia };
@@ -667,6 +699,9 @@ export class ConferenciaService {
         `Finalização concluída com erros nos seguintes registros: ${erros.join(', ')}. Os dados locais foram preservados para nova tentativa.`,
       );
     }
+
+    await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario)
+      .catch(() => console.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
 
     await this.sessaoService.marcarFinalizada(sessao.id);
 
