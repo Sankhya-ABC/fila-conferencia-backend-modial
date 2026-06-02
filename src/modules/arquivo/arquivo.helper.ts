@@ -138,17 +138,37 @@ export class ArquivoHelper {
         expression: 'NUNOTA = ?',
         parameters: [{ value: numeroUnico, type: 'I' }],
       },
-      joins: [{ path: 'Parceiro', fieldset: 'RAZAOSOCIAL,UF' }],
+      joins: [{ path: 'Parceiro', fieldset: 'RAZAOSOCIAL' }],
       limit: 1,
     });
 
     const rows = this.loadRecords.parseEntities(raw);
     const r = rows[0];
 
+    const codParc = r ? Number(r.CODPARC) : null;
+    let uf: string | null = null;
+
+    if (codParc) {
+      const parceiroRaw = await this.loadRecords.loadRecords({
+        rootEntity: 'Parceiro',
+        fieldset: 'UF',
+        criteria: {
+          expression: 'CODPARC = ?',
+          parameters: [{ value: codParc, type: 'I' }],
+        },
+        limit: 1,
+      }).catch(() => null);
+
+      if (parceiroRaw) {
+        const parceiroRows = this.loadRecords.parseEntities(parceiroRaw);
+        uf = parceiroRows[0]?.UF ?? null;
+      }
+    }
+
     return {
       numeroUnico: r ? Number(r.NUNOTA) : numeroUnico,
       numTalao: r?.AD_NUMTALAO ?? null,
-      uf: r?.['Parceiro_UF'] ?? null,
+      uf,
       cliente: r?.['Parceiro_RAZAOSOCIAL'] ?? null,
     };
   }
