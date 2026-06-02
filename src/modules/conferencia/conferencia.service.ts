@@ -359,7 +359,7 @@ export class ConferenciaService {
   // ─── Finalizar (batch-write de tudo para o Sankhya) ──────────────────────
 
   private async atualizarObservacaoNota(numeroUnico: number, nomeUsuario: string): Promise<void> {
-    const novaLinha = `Pedido Separado por:${nomeUsuario}`;
+    const novaLinha = `Pedido Separado por: ${nomeUsuario}`;
 
     const raw = await this.loadRecordsClient.loadRecords({
       rootEntity: 'CabecalhoNota',
