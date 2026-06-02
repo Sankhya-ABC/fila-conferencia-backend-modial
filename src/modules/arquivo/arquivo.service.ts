@@ -85,8 +85,8 @@ export class ArquivoService {
     });
 
     const pdfUint8 = await page.pdf({
-      width: '425px',
-      height: '283px',
+      width: '15cm',
+      height: '10cm',
       printBackground: true,
     });
 
