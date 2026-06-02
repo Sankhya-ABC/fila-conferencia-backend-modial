@@ -131,45 +131,53 @@ export class ArquivoHelper {
   // ─── Carrega info da nota via LoadRecords ──────────────────────────────────
 
   private async carregarInfoNota(numeroUnico: number) {
-    const raw = await this.loadRecords.loadRecords({
+    // Chamada 1: cabeçalho (sem join — evita falhas silenciosas de campos inválidos)
+    const cabRaw = await this.loadRecords.loadRecords({
       rootEntity: 'CabecalhoNota',
       fieldset: 'NUNOTA,AD_NUMTALAO,CODPARC',
-      criteria: {
-        expression: 'NUNOTA = ?',
-        parameters: [{ value: numeroUnico, type: 'I' }],
-      },
-      joins: [{ path: 'Parceiro', fieldset: 'RAZAOSOCIAL' }],
+      criteria: { expression: `NUNOTA = ${numeroUnico}` },
       limit: 1,
     });
 
-    const rows = this.loadRecords.parseEntities(raw);
-    const r = rows[0];
+    const cabRows = this.loadRecords.parseEntities(cabRaw);
+    const cab = cabRows[0];
+    console.log('[etiqueta] cab:', JSON.stringify(cab));
 
-    const codParc = r ? Number(r.CODPARC) : null;
+    const codParc = cab ? Number(cab.CODPARC) : null;
+    let razaoSocial: string | null = null;
     let uf: string | null = null;
 
+    // Chamada 2: parceiro direto por CODPARC (sem join, padrão comprovado)
     if (codParc) {
-      const parceiroRaw = await this.loadRecords.loadRecords({
+      const parcRaw = await this.loadRecords.loadRecords({
         rootEntity: 'Parceiro',
-        fieldset: 'UF',
-        criteria: {
-          expression: 'CODPARC = ?',
-          parameters: [{ value: codParc, type: 'I' }],
-        },
+        fieldset: 'RAZAOSOCIAL,UF',
+        criteria: { expression: `CODPARC = ${codParc}` },
         limit: 1,
-      }).catch(() => null);
+      }).catch(async () => {
+        // UF pode não existir na entidade — tenta só RAZAOSOCIAL
+        return this.loadRecords.loadRecords({
+          rootEntity: 'Parceiro',
+          fieldset: 'RAZAOSOCIAL',
+          criteria: { expression: `CODPARC = ${codParc}` },
+          limit: 1,
+        }).catch(() => null);
+      });
 
-      if (parceiroRaw) {
-        const parceiroRows = this.loadRecords.parseEntities(parceiroRaw);
-        uf = parceiroRows[0]?.UF ?? null;
+      if (parcRaw) {
+        const parcRows = this.loadRecords.parseEntities(parcRaw);
+        const parc = parcRows[0];
+        console.log('[etiqueta] parc:', JSON.stringify(parc));
+        razaoSocial = parc?.RAZAOSOCIAL ?? null;
+        uf = parc?.UF ?? null;
       }
     }
 
     return {
-      numeroUnico: r ? Number(r.NUNOTA) : numeroUnico,
-      numTalao: r?.AD_NUMTALAO ?? null,
+      numeroUnico: cab ? Number(cab.NUNOTA) : numeroUnico,
+      numTalao: cab?.AD_NUMTALAO ?? null,
       uf,
-      cliente: r?.['Parceiro_RAZAOSOCIAL'] ?? null,
+      cliente: razaoSocial,
     };
   }
 }
