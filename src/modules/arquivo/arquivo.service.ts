@@ -51,6 +51,14 @@ export class ArquivoService {
     const totalVolumes = rows.length;
     const totalVol = String(totalVolumes).padStart(2, '0');
 
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    const printDateTime = `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+
     const volumes = rows.map((row, index) => {
       let seqVol;
       if (isCubagemNaoDetalhada) {
@@ -70,6 +78,7 @@ export class ArquivoService {
         totalVolDig2: totalVol[1] ?? '0',
 
         logoBase64,
+        printDateTime,
       };
     });
 

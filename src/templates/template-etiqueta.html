@@ -56,6 +56,9 @@ img { position: absolute; object-fit: contain; padding-left: 5px; }
 <div class="page-outer">
 <div class="page">
 
+  <!-- Data/hora de impressão: canto superior direito -->
+  <div style="position:absolute;right:3px;top:3px;font-size:8px;font-weight:normal;white-space:nowrap;">{{printDateTime}}</div>
+
   <!-- Cliente: x=15 y=16 w=395 h=30 -->
   <div class="f bottom" style="left:15px;top:16px;width:395px;height:30px;font-size:15px;overflow:hidden;white-space:nowrap;">Cliente: {{cliente}}</div>
 
