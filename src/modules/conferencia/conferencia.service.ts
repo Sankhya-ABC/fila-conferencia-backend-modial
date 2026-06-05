@@ -338,7 +338,7 @@ export class ConferenciaService {
   ) {
     try {
       const finalizadas = await this.sessaoService.listarSessionsFinalizadas();
-      if (!finalizadas.length) return { data: [], hasNextPage: false, page, perPage };
+      if (!finalizadas.length) return { data: [], hasNextPage: false, total: 0, page, perPage };
 
       let nunotas = finalizadas.map((s) => s.numeroUnico);
       const nunotaMap = new Map(finalizadas.map((s) => [s.numeroUnico, s.numeroConferencia]));
@@ -346,9 +346,14 @@ export class ConferenciaService {
       if (queryParams.numeroUnico) {
         nunotas = nunotas.filter((n) => n === Number(queryParams.numeroUnico));
       }
-      if (!nunotas.length) return { data: [], hasNextPage: false, page, perPage };
+      if (!nunotas.length) return { data: [], hasNextPage: false, total: 0, page, perPage };
 
-      const finExpressions = [`NUNOTA IN (${nunotas.join(',')})`];
+      // Pagina o array de NUNOTAs no banco local antes de ir ao Sankhya
+      const total = nunotas.length;
+      const paginados = nunotas.slice(page * perPage, (page + 1) * perPage);
+      if (!paginados.length) return { data: [], hasNextPage: false, total, page, perPage };
+
+      const finExpressions = [`NUNOTA IN (${paginados.join(',')})`];
       const finParams: { value: any; type: 'S' | 'I' | 'D' | 'B' }[] = [];
       if (queryParams.numeroNota)   { finExpressions.push('NUMNOTA = ?');    finParams.push({ value: Number(queryParams.numeroNota), type: 'I' }); }
       if (queryParams.idParceiro)   { finExpressions.push('CODPARC = ?');    finParams.push({ value: Number(queryParams.idParceiro), type: 'I' }); }
@@ -367,10 +372,10 @@ export class ConferenciaService {
           { path: 'TipoOperacao', fieldset: 'DESCROPER' },
           { path: 'Vendedor', fieldset: 'APELIDO' },
         ],
-        limit: 200,
+        limit: perPage,
       }).catch(() => null);
 
-      if (!rawFin) return { data: [], hasNextPage: false, page, perPage };
+      if (!rawFin) return { data: [], hasNextPage: false, total, page, perPage };
 
       const data = this.loadRecordsClient.parseEntities(rawFin).map((r) => ({
         codigoStatus: 'F',
@@ -391,9 +396,9 @@ export class ConferenciaService {
         apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
       }));
 
-      return { data, hasNextPage: false, page, perPage };
+      return { data, hasNextPage: (page + 1) * perPage < total, total, page, perPage };
     } catch {
-      return { data: [], hasNextPage: false, page, perPage };
+      return { data: [], hasNextPage: false, total: 0, page, perPage };
     }
   }
 
