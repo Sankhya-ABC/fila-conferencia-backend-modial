@@ -71,6 +71,9 @@ model SessaoConferencia {
   comprimento Float?
   peso        Float?
 
+  dtAbertura   DateTime?
+  dtFechamento DateTime?
+
   itens    SessaoItem[]
   volumes  SessaoVolume[]
   leituras SessaoLeitura[]
@@ -157,6 +160,19 @@ model ProdutoCache {
   complemento String?
   imagem      String?
   syncAt      DateTime @updatedAt
+}
+
+model LogLogin {
+  id        String   @id @default(uuid())
+  idUsuario Int
+  criadoEm  DateTime @default(now())
+}
+
+model LogHeartbeat {
+  id                String   @id @default(uuid())
+  idUsuario         Int
+  numeroConferencia Int?
+  criadoEm          DateTime @default(now())
 }
 
 model CodigoBarrasCache {
