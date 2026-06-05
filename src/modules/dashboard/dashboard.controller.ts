@@ -14,11 +14,15 @@ export class DashboardController {
     @Query('periodo') periodo = 'hoje',
     @Query('idUsuario') idUsuario?: string,
     @Query('idUsuarioTimeline') idUsuarioTimeline?: string,
+    @Query('dataInicio') dataInicio?: string,
+    @Query('dataFim') dataFim?: string,
   ) {
     return this.service.getProdutividade({
       periodo: (periodo as any) || 'hoje',
       idUsuario: idUsuario || null,
       idUsuarioTimeline: idUsuarioTimeline ? Number(idUsuarioTimeline) : null,
+      dataInicio: dataInicio || null,
+      dataFim: dataFim || null,
     });
   }
 }

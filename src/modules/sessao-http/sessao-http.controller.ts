@@ -33,14 +33,14 @@ export class SessaoHttpController {
     @Body() body: { token?: string },
   ) {
     const idUsuario = await this.resolveIdUsuario(req, body?.token);
-    if (!idUsuario) return;
+    if (idUsuario == null) return;
     return this.service.registrarFechamento(numeroUnico);
   }
 
   @Post('heartbeat')
   async heartbeat(@Body() body: { numeroConferencia?: number }, @Req() req: any) {
     const idUsuario = await this.resolveIdUsuario(req);
-    if (!idUsuario) return; // sessão antiga sem idUsuario — ignora silenciosamente
+    if (idUsuario == null) return; // sessão sem idUsuario — ignora silenciosamente
     return this.service.registrarHeartbeat(idUsuario, body.numeroConferencia);
   }
 }

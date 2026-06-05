@@ -30,11 +30,73 @@ export class ConferenciaService {
     private readonly prisma: PrismaService,
   ) {}
 
+  // ─── Cache stale-while-revalidate ─────────────────────────────────────────
+  private readonly filaCache = new Map<string, {
+    result: any;
+    cachedAt: number;
+    refreshing: boolean;
+  }>();
+
+  private _filaKey(q: FilaConferenciaFilter): string {
+    const clean: Record<string, any> = {};
+    for (const [k, v] of Object.entries(q)) {
+      if (v !== undefined && v !== null && v !== '') clean[k] = v;
+    }
+    return JSON.stringify(clean, Object.keys(clean).sort());
+  }
+
   // ─── Fila (LoadRecords + status do banco local) ────────────────────────────
 
   async getFilaConferencias(queryParams: FilaConferenciaFilter) {
+    const key = this._filaKey(queryParams);
+    const hit = this.filaCache.get(key);
+
+    if (hit) {
+      // Stale-while-revalidate: retorna o cache imediatamente (<1ms)
+      // e dispara refresh em background para manter dado fresco.
+      if (!hit.refreshing) {
+        hit.refreshing = true;
+        this._fetchFila(queryParams)
+          .then((fresh) => {
+            hit.result   = fresh;
+            hit.cachedAt = Date.now();
+            hit.refreshing = false;
+          })
+          .catch(() => { hit.refreshing = false; });
+      }
+      return hit.result;
+    }
+
+    // Cache miss — busca normal, popula cache
+    const result = await this._fetchFila(queryParams);
+    this.filaCache.set(key, { result, cachedAt: Date.now(), refreshing: false });
+
+    // Evita crescimento ilimitado: descarta a entrada mais antiga quando passa de 100
+    if (this.filaCache.size > 100) {
+      const [oldestKey] = [...this.filaCache.entries()]
+        .sort((a, b) => a[1].cachedAt - b[1].cachedAt)[0];
+      this.filaCache.delete(oldestKey);
+    }
+
+    return result;
+  }
+
+  private async _fetchFila(queryParams: FilaConferenciaFilter) {
     const page = Number(queryParams.page ?? 0);
     const perPage = Number(queryParams.perPage ?? 15);
+
+    // Resolve statusList aqui para usar no short-circuit abaixo
+    const statusList = (queryParams.codigoStatus ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+
+    // ── PERF: short-circuit F-only ────────────────────────────────────────────
+    // A query principal tem NOT EXISTS(TGFCON2 STATUS IN ('F','D')), o que
+    // garante que ela retorna ZERO linhas quando só se quer finalizados.
+    // Pulamos ela por completo e buscamos direto no banco local + Sankhya.
+    // Resultado idêntico ao path normal, sem o round-trip Sankhya desperdiçado.
+    if (statusList.length > 0 && statusList.every((s) => s === 'F')) {
+      return this._getFilaFinalizadas(queryParams, page, perPage);
+    }
 
     const parameters: { value: any; type: 'S' | 'I' | 'D' | 'B' }[] = [];
     const expressions: string[] = [
@@ -120,44 +182,46 @@ export class ConferenciaService {
     const rows = this.loadRecordsClient.parseEntities(raw);
     const hasNextPage = this.loadRecordsClient.hasNextPage(raw);
 
-    // Busca STATUS real do TGFCON2 para conferências que têm NUCONFATUAL
+    // ── PERF: calls #2 e #3 em paralelo ─────────────────────────────────────
+    // Antes rodavam em série; são independentes entre si (ambos dependem
+    // apenas de `rows` e `activeNums`, que já estão disponíveis aqui).
+    // Resultado idêntico — só o tempo muda (economiza o tempo da call mais lenta).
     const nuconfs = rows.map((r) => Number(r.NUCONFATUAL)).filter((n) => n > 0);
-    const statusSankhyaMap = new Map<number, string>();
-    if (nuconfs.length > 0) {
-      try {
-        const rawConf = await this.loadRecordsClient.loadRecords({
-          rootEntity: 'CabecalhoConferencia',
-          fieldset: 'NUCONF,STATUS',
-          criteria: {
-            expression: `NUCONF IN (${nuconfs.join(',')})`,
-          },
-        });
-        for (const c of this.loadRecordsClient.parseEntities(rawConf)) {
-          statusSankhyaMap.set(Number(c.NUCONF), c.STATUS);
-        }
-      } catch { /* soft-fail: não bloqueia a fila se o Sankhya não responder */ }
-    }
-
-    // Busca conferências ativas via NUNOTAORIG para notas sem NUCONFATUAL e sem sessão local
-    // (conferência criada no Sankhya sem vincular o NUCONFATUAL na nota)
     const nunotasOrfas = rows
       .filter((r) => !r.NUCONFATUAL && !activeNums.has(Number(r.NUNOTA)))
       .map((r) => Number(r.NUNOTA));
-    const nunotasComConfOrfa = new Set<number>();
-    if (nunotasOrfas.length > 0) {
-      try {
-        const rawOrfas = await this.loadRecordsClient.loadRecords({
-          rootEntity: 'CabecalhoConferencia',
-          fieldset: 'NUNOTAORIG',
-          criteria: {
-            expression: `NUNOTAORIG IN (${nunotasOrfas.join(',')}) AND STATUS = 'A'`,
-          },
-        });
-        for (const c of this.loadRecordsClient.parseEntities(rawOrfas)) {
-          nunotasComConfOrfa.add(Number(c.NUNOTAORIG));
-        }
-      } catch { /* soft-fail */ }
-    }
+
+    const [statusSankhyaMap, nunotasComConfOrfa] = await Promise.all([
+      nuconfs.length > 0
+        ? this.loadRecordsClient.loadRecords({
+            rootEntity: 'CabecalhoConferencia',
+            fieldset: 'NUCONF,STATUS',
+            criteria: { expression: `NUCONF IN (${nuconfs.join(',')})` },
+          }).then((rawConf) => {
+            const map = new Map<number, string>();
+            for (const c of this.loadRecordsClient.parseEntities(rawConf)) {
+              map.set(Number(c.NUCONF), c.STATUS);
+            }
+            return map;
+          }).catch(() => new Map<number, string>())
+        : Promise.resolve(new Map<number, string>()),
+
+      nunotasOrfas.length > 0
+        ? this.loadRecordsClient.loadRecords({
+            rootEntity: 'CabecalhoConferencia',
+            fieldset: 'NUNOTAORIG',
+            criteria: {
+              expression: `NUNOTAORIG IN (${nunotasOrfas.join(',')}) AND STATUS = 'A'`,
+            },
+          }).then((rawOrfas) => {
+            const set = new Set<number>();
+            for (const c of this.loadRecordsClient.parseEntities(rawOrfas)) {
+              set.add(Number(c.NUNOTAORIG));
+            }
+            return set;
+          }).catch(() => new Set<number>())
+        : Promise.resolve(new Set<number>()),
+    ]);
 
     let data = rows.map((r) => {
       const nuconf = r.NUCONFATUAL ? Number(r.NUCONFATUAL) : null;
@@ -192,70 +256,145 @@ export class ConferenciaService {
       (d.numeroConferencia === null && !nunotasComConfOrfa.has(d.numeroUnico)),
     );
 
-    const statusList = (queryParams.codigoStatus ?? '')
-      .split(',').map((s) => s.trim()).filter(Boolean);
-
     if (statusList.length > 0) {
       data = data.filter((d) => statusList.includes(d.codigoStatus));
     }
 
-    // Finalizados no sistema (status='F'): query separada no banco local + Sankhya
-    // A query principal usa NOT EXISTS que os exclui — buscamos independentemente
+    // Finalizados no sistema (status misto que inclui 'F'):
+    // A query principal usa NOT EXISTS que os exclui — buscamos independentemente.
     if (statusList.includes('F')) {
       try {
         const finalizadas = await this.sessaoService.listarSessionsFinalizadas();
         if (finalizadas.length > 0) {
-          const nunotas = finalizadas.map((s) => s.numeroUnico);
+          // ── PERF: filtros empurrados para o Sankhya em vez de em memória ──────
+          // Resultado idêntico — reduz dados trafegados quando há filtros ativos.
+          let nunotas = finalizadas.map((s) => s.numeroUnico);
           const nunotaMap = new Map(finalizadas.map((s) => [s.numeroUnico, s.numeroConferencia]));
 
-          const rawFin = await this.loadRecordsClient.loadRecords({
-            rootEntity: 'CabecalhoNota',
-            fieldset: 'NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,AD_NUMTALAO,AD_TIPOENTREGA,CODVEND',
-            criteria: { expression: `NUNOTA IN (${nunotas.join(',')})` },
-            joins: [
-              { path: 'Parceiro', fieldset: 'NOMEPARC' },
-              { path: 'TipoOperacao', fieldset: 'DESCROPER' },
-              { path: 'Vendedor', fieldset: 'APELIDO' },
-            ],
-            limit: 200,
-          }).catch(() => null);
+          if (queryParams.numeroUnico) {
+            nunotas = nunotas.filter((n) => n === Number(queryParams.numeroUnico));
+          }
+          if (!nunotas.length) {
+            // nenhum finalizados bate com o filtro — pula a query Sankhya
+          } else {
+            const finExpressions = [`NUNOTA IN (${nunotas.join(',')})`];
+            const finParams: { value: any; type: 'S' | 'I' | 'D' | 'B' }[] = [];
+            if (queryParams.numeroNota)   { finExpressions.push('NUMNOTA = ?');    finParams.push({ value: Number(queryParams.numeroNota), type: 'I' }); }
+            if (queryParams.idParceiro)   { finExpressions.push('CODPARC = ?');    finParams.push({ value: Number(queryParams.idParceiro), type: 'I' }); }
+            if (queryParams.idEmpresa)    { finExpressions.push('CODEMP = ?');     finParams.push({ value: Number(queryParams.idEmpresa), type: 'I' }); }
+            if (queryParams.numeroModial) { finExpressions.push('AD_NUMTALAO = ?'); finParams.push({ value: queryParams.numeroModial, type: 'S' }); }
 
-          if (rawFin) {
-            const finRows = this.loadRecordsClient.parseEntities(rawFin);
-            let finData = finRows.map((r) => ({
-              codigoStatus: 'F',
-              statusSankhya: 'F',
-              emAndamentoNativo: false,
-              numeroUnico: Number(r.NUNOTA),
-              numeroNota: Number(r.NUMNOTA),
-              numeroConferencia: nunotaMap.get(Number(r.NUNOTA)) ?? null,
-              idParceiro: Number(r.CODPARC),
-              nomeParceiro: r['Parceiro_NOMEPARC'] ?? null,
-              idEmpresa: Number(r.CODEMP),
-              codigoTipoMovimento: r.TIPMOV,
-              codigoTipoOperacao: r.CODTIPOPER ? Number(r.CODTIPOPER) : null,
-              descricaoTipoOperacao: r['TipoOperacao_DESCROPER'] ?? null,
-              dataMovimento: r.DTNEG,
-              AD_NUMTALAO: r.AD_NUMTALAO ?? null,
-              AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
-              apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
-            }));
+            const rawFin = await this.loadRecordsClient.loadRecords({
+              rootEntity: 'CabecalhoNota',
+              fieldset: 'NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,AD_NUMTALAO,AD_TIPOENTREGA,CODVEND',
+              criteria: {
+                expression: finExpressions.join(' AND '),
+                parameters: finParams.length ? finParams : undefined,
+              },
+              joins: [
+                { path: 'Parceiro', fieldset: 'NOMEPARC' },
+                { path: 'TipoOperacao', fieldset: 'DESCROPER' },
+                { path: 'Vendedor', fieldset: 'APELIDO' },
+              ],
+              limit: 200,
+            }).catch(() => null);
 
-            // Aplica filtros de texto/número dos query params
-            if (queryParams.numeroNota) finData = finData.filter(d => d.numeroNota === Number(queryParams.numeroNota));
-            if (queryParams.numeroUnico) finData = finData.filter(d => d.numeroUnico === Number(queryParams.numeroUnico));
-            if (queryParams.idParceiro) finData = finData.filter(d => d.idParceiro === Number(queryParams.idParceiro));
-            if (queryParams.idEmpresa) finData = finData.filter(d => d.idEmpresa === Number(queryParams.idEmpresa));
-
-            data = [...data, ...finData];
+            if (rawFin) {
+              const finData = this.loadRecordsClient.parseEntities(rawFin).map((r) => ({
+                codigoStatus: 'F',
+                statusSankhya: 'F',
+                emAndamentoNativo: false,
+                numeroUnico: Number(r.NUNOTA),
+                numeroNota: Number(r.NUMNOTA),
+                numeroConferencia: nunotaMap.get(Number(r.NUNOTA)) ?? null,
+                idParceiro: Number(r.CODPARC),
+                nomeParceiro: r['Parceiro_NOMEPARC'] ?? null,
+                idEmpresa: Number(r.CODEMP),
+                codigoTipoMovimento: r.TIPMOV,
+                codigoTipoOperacao: r.CODTIPOPER ? Number(r.CODTIPOPER) : null,
+                descricaoTipoOperacao: r['TipoOperacao_DESCROPER'] ?? null,
+                dataMovimento: r.DTNEG,
+                AD_NUMTALAO: r.AD_NUMTALAO ?? null,
+                AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
+                apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
+              }));
+              data = [...data, ...finData];
+            }
           }
         }
       } catch { /* soft-fail — não bloqueia a fila */ }
     }
 
-    // hasNextPage só é válido se o resultado filtrado encheu a página;
-    // caso contrário o filtro pós-Sankhya reduziu os itens e não há próxima página real
     return { data, hasNextPage: hasNextPage && data.length >= perPage, page, perPage };
+  }
+
+  // Extração do path F-only para manter getFilaConferencias legível.
+  // Lógica idêntica ao bloco statusList.includes('F') original —
+  // apenas sem a query principal desperdiçada antes.
+  private async _getFilaFinalizadas(
+    queryParams: FilaConferenciaFilter,
+    page: number,
+    perPage: number,
+  ) {
+    try {
+      const finalizadas = await this.sessaoService.listarSessionsFinalizadas();
+      if (!finalizadas.length) return { data: [], hasNextPage: false, page, perPage };
+
+      let nunotas = finalizadas.map((s) => s.numeroUnico);
+      const nunotaMap = new Map(finalizadas.map((s) => [s.numeroUnico, s.numeroConferencia]));
+
+      if (queryParams.numeroUnico) {
+        nunotas = nunotas.filter((n) => n === Number(queryParams.numeroUnico));
+      }
+      if (!nunotas.length) return { data: [], hasNextPage: false, page, perPage };
+
+      const finExpressions = [`NUNOTA IN (${nunotas.join(',')})`];
+      const finParams: { value: any; type: 'S' | 'I' | 'D' | 'B' }[] = [];
+      if (queryParams.numeroNota)   { finExpressions.push('NUMNOTA = ?');    finParams.push({ value: Number(queryParams.numeroNota), type: 'I' }); }
+      if (queryParams.idParceiro)   { finExpressions.push('CODPARC = ?');    finParams.push({ value: Number(queryParams.idParceiro), type: 'I' }); }
+      if (queryParams.idEmpresa)    { finExpressions.push('CODEMP = ?');     finParams.push({ value: Number(queryParams.idEmpresa), type: 'I' }); }
+      if (queryParams.numeroModial) { finExpressions.push('AD_NUMTALAO = ?'); finParams.push({ value: queryParams.numeroModial, type: 'S' }); }
+
+      const rawFin = await this.loadRecordsClient.loadRecords({
+        rootEntity: 'CabecalhoNota',
+        fieldset: 'NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,AD_NUMTALAO,AD_TIPOENTREGA,CODVEND',
+        criteria: {
+          expression: finExpressions.join(' AND '),
+          parameters: finParams.length ? finParams : undefined,
+        },
+        joins: [
+          { path: 'Parceiro', fieldset: 'NOMEPARC' },
+          { path: 'TipoOperacao', fieldset: 'DESCROPER' },
+          { path: 'Vendedor', fieldset: 'APELIDO' },
+        ],
+        limit: 200,
+      }).catch(() => null);
+
+      if (!rawFin) return { data: [], hasNextPage: false, page, perPage };
+
+      const data = this.loadRecordsClient.parseEntities(rawFin).map((r) => ({
+        codigoStatus: 'F',
+        statusSankhya: 'F',
+        emAndamentoNativo: false,
+        numeroUnico: Number(r.NUNOTA),
+        numeroNota: Number(r.NUMNOTA),
+        numeroConferencia: nunotaMap.get(Number(r.NUNOTA)) ?? null,
+        idParceiro: Number(r.CODPARC),
+        nomeParceiro: r['Parceiro_NOMEPARC'] ?? null,
+        idEmpresa: Number(r.CODEMP),
+        codigoTipoMovimento: r.TIPMOV,
+        codigoTipoOperacao: r.CODTIPOPER ? Number(r.CODTIPOPER) : null,
+        descricaoTipoOperacao: r['TipoOperacao_DESCROPER'] ?? null,
+        dataMovimento: r.DTNEG,
+        AD_NUMTALAO: r.AD_NUMTALAO ?? null,
+        AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
+        apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
+      }));
+
+      return { data, hasNextPage: false, page, perPage };
+    } catch {
+      return { data: [], hasNextPage: false, page, perPage };
+    }
   }
 
   // Verificação leve: só bate no banco local, sem Sankhya.
@@ -323,6 +462,7 @@ export class ConferenciaService {
   // ─── Iniciar (cria registro Sankhya + carrega sessão local) ───────────────
 
   async postIniciarConferencia({ idUsuario, numeroUnico }: IniciarConferenciaBody) {
+    this.filaCache.clear(); // status mudou — invalida cache da fila
     // Se já existe sessão local ativa, retorna sem recriar
     const sessaoExistente = await this.sessaoService.buscarPorNota(numeroUnico);
     if (sessaoExistente?.status === 'A') {
@@ -385,6 +525,7 @@ export class ConferenciaService {
   }
 
   async postFinalizarConferencia({ numeroConferencia }: NumeroConferenciaFilter) {
+    this.filaCache.clear(); // nota finalizada — invalida cache da fila
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
 

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 
-type Periodo = 'hoje' | 'semana' | 'mes';
+type Periodo = 'hoje' | 'semana' | 'mes' | 'custom';
 
 @Injectable()
 export class DashboardService {
@@ -9,8 +9,8 @@ export class DashboardService {
 
   private getPeriodStart(periodo: Periodo): Date {
     const now = new Date();
-    if (periodo === 'hoje') return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (periodo === 'semana') return new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+    if (periodo === 'hoje')   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    if (periodo === 'semana') return new Date(now.getTime() - 7  * 24 * 3600 * 1000);
     return new Date(now.getTime() - 30 * 24 * 3600 * 1000);
   }
 
@@ -18,15 +18,28 @@ export class DashboardService {
     periodo: Periodo;
     idUsuario?: string | null;
     idUsuarioTimeline?: number | null;
+    dataInicio?: string | null;
+    dataFim?: string | null;
   }) {
     const { periodo, idUsuario, idUsuarioTimeline } = params;
-    const from = this.getPeriodStart(periodo);
+
+    // Resolve intervalo de datas
+    let from: Date;
+    let to: Date = new Date();
+    if (periodo === 'custom' && params.dataInicio && params.dataFim) {
+      from = new Date(params.dataInicio);
+      to   = new Date(params.dataFim);
+      to.setHours(23, 59, 59, 999);
+    } else {
+      from = this.getPeriodStart(periodo);
+    }
+
     const CINCO_MIN = new Date(Date.now() - 5 * 60 * 1000);
 
     // ── Sessões do período ──────────────────────────────────────────────────
     const sessoes = await this.prisma.sessaoConferencia.findMany({
       where: {
-        criadoEm: { gte: from },
+        criadoEm: { gte: from, lte: to },
         ...(idUsuario ? { idUsuario: Number(idUsuario) } : {}),
       },
       select: {
@@ -57,7 +70,7 @@ export class DashboardService {
     const totalItensConf = sessoesFin.reduce(
       (acc, s) => acc + s.itens.reduce((a, i) => a + i.qtdConferidaLocal, 0), 0,
     );
-    const horasPeriodo = Math.max((Date.now() - from.getTime()) / 3600000, 1);
+    const horasPeriodo = Math.max((to.getTime() - from.getTime()) / 3600000, 1);
     const totalItensPorHora = Math.round(totalItensConf / horasPeriodo);
 
     const pesoTotalKg = sessoesFin.reduce(
@@ -92,6 +105,7 @@ export class DashboardService {
     const userMap = new Map(users.map(u => [u.codigo, u.nome]));
 
     const atividadeAgora = [...hbByUser.values()].map(hb => ({
+      idUsuario: hb.idUsuario,
       nomeUsuario: userMap.get(hb.idUsuario) ?? `Usuário ${hb.idUsuario}`,
       numeroConferencia: hb.numeroConferencia ?? 0,
       nomeParceiro: '',
@@ -101,7 +115,7 @@ export class DashboardService {
     // ── Logins no período ───────────────────────────────────────────────────
     const loginGroups = await this.prisma.logLogin.groupBy({
       by: ['idUsuario'],
-      where: { criadoEm: { gte: from } },
+      where: { criadoEm: { gte: from, lte: to } },
       _count: { id: true },
     });
     const loginMap = new Map(loginGroups.map(l => [l.idUsuario, l._count.id]));
@@ -141,11 +155,31 @@ export class DashboardService {
       total: picosMap.get(h) ?? 0,
     }));
 
+    // ── Heatmap (dia×hora) ──────────────────────────────────────────────────
+    // dia: 0=Seg … 4=Sex (sáb/dom ignorados)
+    const heatmapMap = new Map<string, number>();
+    for (const s of sessoesFin) {
+      const dt = s.dtAbertura ?? s.criadoEm;
+      const diaSemana = dt.getDay(); // 0=Dom, 1=Seg … 6=Sáb
+      if (diaSemana === 0 || diaSemana === 6) continue;
+      const dia  = diaSemana - 1; // 0=Seg … 4=Sex
+      const hora = dt.getHours();
+      const key  = `${dia}_${hora}`;
+      heatmapMap.set(key, (heatmapMap.get(key) ?? 0) + 1);
+    }
+    const heatmap = [...heatmapMap.entries()].map(([key, total]) => {
+      const [dia, hora] = key.split('_').map(Number);
+      return { dia, hora, total };
+    });
+
     // ── Linha do tempo ──────────────────────────────────────────────────────
     let linhaDoTempo: any[] = [];
     if (idUsuarioTimeline != null) {
       const tlSessoes = await this.prisma.sessaoConferencia.findMany({
-        where: { idUsuario: Number(idUsuarioTimeline), criadoEm: { gte: from } },
+        where: {
+          idUsuario: Number(idUsuarioTimeline),
+          criadoEm: { gte: from, lte: to },
+        },
         orderBy: { criadoEm: 'desc' },
         select: {
           numeroConferencia: true,
@@ -182,6 +216,7 @@ export class DashboardService {
       atividadeAgora,
       ranking,
       picos,
+      heatmap,
       linhaDoTempo,
     };
   }

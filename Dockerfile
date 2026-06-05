@@ -2,7 +2,13 @@ FROM node:20-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y openssl ca-certificates bash curl python3 build-essential && rm -rf /var/lib/apt/lists/*
+# Pula download do Chrome bundled — usamos o chromium do sistema
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+
+RUN apt-get update && apt-get install -y \
+    openssl ca-certificates bash curl python3 build-essential \
+    chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
 
