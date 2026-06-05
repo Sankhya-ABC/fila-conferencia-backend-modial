@@ -47,7 +47,10 @@ export class AuthService {
     await this.authUserService.set(user.codigo, {
       token,
       nome: user.nome,
+      idUsuario: user.codigo,
     });
+
+    await this.prisma.logLogin.create({ data: { idUsuario: user.codigo } });
 
     return {
       token,

@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 type SessionData = {
   token: string;
   nome: string;
+  idUsuario: number;
 };
 
 @Injectable()

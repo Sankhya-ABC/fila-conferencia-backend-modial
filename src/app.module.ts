@@ -19,6 +19,8 @@ import { VolumeModule } from './modules/volume/volume.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SincronizacaoModule } from './modules/sincronizacao/sincronizacao.module';
 import { UsuarioModule } from './modules/usuario/usuario.module';
+import { SessaoHttpModule } from './modules/sessao-http/sessao-http.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { PrismaModule } from 'prisma/prisma.module';
 
 @Module({
@@ -34,6 +36,8 @@ import { PrismaModule } from 'prisma/prisma.module';
     ArquivoModule,
     VolumeModule,
     UsuarioModule,
+    SessaoHttpModule,
+    DashboardModule,
     AuthModule,
     LoggerModule,
     ConfigModule.forRoot({
