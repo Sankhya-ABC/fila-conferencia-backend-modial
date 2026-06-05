@@ -1,20 +1,11 @@
-import {
-  Body,
-  Controller,
-  Param,
-  ParseIntPipe,
-  Post,
-  Req,
-  UnauthorizedException,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Param, ParseIntPipe, Post, Req } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { NoAuthApp } from 'src/core/guards/auth-app/no-auth-app.decorator';
-import { AuthUserGuard } from 'src/core/guards/auth-user/auth-user.guard';
 import { AuthUserService } from 'src/core/guards/auth-user/auth-user.service';
 import { SessaoHttpService } from './sessao-http.service';
 
 @ApiTags('Sessão')
+@NoAuthApp()
 @Controller('sessao')
 export class SessaoHttpController {
   constructor(
@@ -22,37 +13,34 @@ export class SessaoHttpController {
     private readonly authUserService: AuthUserService,
   ) {}
 
+  private async resolveIdUsuario(req: any, bodyToken?: string): Promise<number | null> {
+    const token = req.headers['authorization']?.split(' ')[1] ?? bodyToken;
+    if (!token) return null;
+    const session = await this.authUserService.getByToken(token);
+    return session?.idUsuario ?? null;
+  }
+
   @Post(':numeroUnico/abrir')
-  @UseGuards(AuthUserGuard)
-  async abrir(
-    @Param('numeroUnico', ParseIntPipe) numeroUnico: number,
-  ) {
+  async abrir(@Param('numeroUnico', ParseIntPipe) numeroUnico: number) {
     return this.service.registrarAbertura(numeroUnico);
   }
 
   // Aceita token via Authorization header (fetch normal) OU via body (sendBeacon)
   @Post(':numeroUnico/fechar')
-  @NoAuthApp()
   async fechar(
     @Param('numeroUnico', ParseIntPipe) numeroUnico: number,
     @Req() req: any,
     @Body() body: { token?: string },
   ) {
-    const token = req.headers['authorization']?.split(' ')[1] ?? body?.token;
-    if (!token) return;
-    const session = await this.authUserService.getByToken(token);
-    if (!session) return;
+    const idUsuario = await this.resolveIdUsuario(req, body?.token);
+    if (!idUsuario) return;
     return this.service.registrarFechamento(numeroUnico);
   }
 
   @Post('heartbeat')
-  @UseGuards(AuthUserGuard)
-  async heartbeat(
-    @Body() body: { numeroConferencia?: number },
-    @Req() req: any,
-  ) {
-    const idUsuario: number = req.user?.idUsuario;
-    if (!idUsuario) throw new UnauthorizedException();
+  async heartbeat(@Body() body: { numeroConferencia?: number }, @Req() req: any) {
+    const idUsuario = await this.resolveIdUsuario(req);
+    if (!idUsuario) return; // sessão antiga sem idUsuario — ignora silenciosamente
     return this.service.registrarHeartbeat(idUsuario, body.numeroConferencia);
   }
 }
