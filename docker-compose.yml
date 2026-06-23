@@ -14,12 +14,16 @@ services:
 
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/fila_conferencia
+      ADMIN_DATABASE_URL: postgresql://postgres:postgres@db:5432/fila_conferencia_admin
+      REDIS_URL: redis://redis:6379
       CHOKIDAR_USEPOLLING: "true"
 
     command: sh -c "npx prisma generate && npx prisma migrate deploy && npm run start:dev"
 
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   db:
@@ -35,6 +39,8 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: fila_conferencia
 
+    command: postgres -c max_connections=300
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -44,5 +50,25 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: fila-conf-redis
+    restart: always
+
+    ports:
+      - "6379:6379"
+
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   postgres_data:
+  redis_data:

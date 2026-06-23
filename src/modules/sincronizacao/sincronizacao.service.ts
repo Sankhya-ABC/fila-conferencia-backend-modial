@@ -4,6 +4,8 @@ import { Perfil } from '@prisma/client';
 import { PrismaService } from 'prisma/prisma.service';
 import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { SankhyaDBExplorerSPClient } from 'src/http-client/db-explorer-sp/db-explorer-sp.client';
+import { TenantService } from 'src/core/tenant/tenant.service';
+import { tenantStorage } from 'src/core/tenant/tenant.context';
 
 @Injectable()
 export class SincronizacaoService {
@@ -13,12 +15,32 @@ export class SincronizacaoService {
     private prisma: PrismaService,
     private readonly loadRecords: SankhyaLoadRecordsClient,
     private readonly dbExplorer: SankhyaDBExplorerSPClient,
+    private readonly tenantService: TenantService,
   ) {}
 
+  private async runForAllTenants(fn: () => Promise<any>) {
+    const CONCURRENCY = 5;
+    const tenants = await this.tenantService.listarAtivos();
+
+    for (let i = 0; i < tenants.length; i += CONCURRENCY) {
+      const lote = tenants.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        lote.map(async (tenant) => {
+          await this.tenantService.getClientForTenant(tenant.slug);
+          await tenantStorage.run(tenant.slug, fn);
+        }),
+      );
+    }
+  }
+
   @Cron('0 */4 * * *')
+  async popularTipoOperacaoCron() {
+    await this.runForAllTenants(() => this.popularTipoOperacao());
+  }
+
   async popularTipoOperacao() {
     try {
-      console.log('INÍCIO: SINCRONIZAÇÃO - TIPO OPERAÇÃO');
+      this.logger.log('INÍCIO: SINCRONIZAÇÃO - TIPO OPERAÇÃO');
 
       const registros: Record<string, any>[] = [];
       let page = 0;
@@ -44,17 +66,21 @@ export class SincronizacaoService {
         ),
       );
 
-      console.log('FIM: SINCRONIZAÇÃO - TIPO OPERAÇÃO');
+      this.logger.log('FIM: SINCRONIZAÇÃO - TIPO OPERAÇÃO');
     } catch (error) {
-      console.log(error);
+      this.logger.error('Erro na sincronização de tipo operação', error instanceof Error ? error.message : String(error));
       throw new BadRequestException('Erro ao sincronizar tipo operação');
     }
   }
 
   @Cron('*/10 * * * *')
+  async popularUsuariosCron() {
+    await this.runForAllTenants(() => this.popularUsuarios());
+  }
+
   async popularUsuarios() {
     try {
-      console.log('INÍCIO: SINCRONIZAÇÃO - USUÁRIOS');
+      this.logger.log('INÍCIO: SINCRONIZAÇÃO - USUÁRIOS');
 
       const usuarioRows: Record<string, any>[] = [];
       let page = 0;
@@ -103,22 +129,44 @@ export class SincronizacaoService {
         ),
       );
 
-      console.log('FIM: SINCRONIZAÇÃO - USUÁRIOS');
+      this.logger.log('FIM: SINCRONIZAÇÃO - USUÁRIOS');
     } catch (error) {
-      console.log(error);
+      this.logger.error('Erro na sincronização de usuários', error instanceof Error ? error.message : String(error));
       throw new BadRequestException('Erro ao sincronizar usuários');
     }
   }
 
+  private async getDialect(): Promise<string> {
+    const slug = tenantStorage.getStore();
+    if (!slug) return 'SQLSERVER';
+    const cfg = await this.tenantService.getConfig(slug);
+    return (cfg as any).dbDialect ?? 'SQLSERVER';
+  }
+
+  private sqlImgHex(dialect: string, where: string): string {
+    const hexExpr = dialect === 'ORACLE'
+      ? `RAWTOHEX(DBMS_LOB.SUBSTR(IMAGEM, 32767, 1))`
+      : `CONVERT(NVARCHAR(MAX), CAST(IMAGEM AS VARBINARY(MAX)), 2)`;
+    return `SELECT CODPROD, DESCRPROD, COMPLDESC, ${hexExpr} AS IMAGEM_HEX FROM TGFPRO WHERE ${where}`;
+  }
+
   async diagnosticoImagem(codprod?: number) {
+    const dialect = await this.getDialect();
+    const datalenExpr = dialect === 'ORACLE'
+      ? `DBMS_LOB.GETLENGTH(IMAGEM)`
+      : `DATALENGTH(IMAGEM)`;
     const stats = await this.dbExplorer.executeQuery(
-      `SELECT COUNT(*) AS TOTAL, AVG(DATALENGTH(IMAGEM)) AS MEDIA_BYTES, MAX(DATALENGTH(IMAGEM)) AS MAX_BYTES FROM TGFPRO WHERE IMAGEM IS NOT NULL`,
+      `SELECT COUNT(*) AS TOTAL, AVG(${datalenExpr}) AS MEDIA_BYTES, MAX(${datalenExpr}) AS MAX_BYTES FROM TGFPRO WHERE IMAGEM IS NOT NULL`,
     ).catch((e) => ({ erro: String(e?.message ?? e) }));
 
     return { stats };
   }
 
   @Cron('0 */6 * * *')
+  async sincronizarProdutosCron() {
+    await this.runForAllTenants(() => this.sincronizarProdutos());
+  }
+
   async sincronizarProdutos() {
     this.logger.log('INÍCIO: SINCRONIZAÇÃO - PRODUTOS E CÓDIGOS DE BARRAS');
 
@@ -150,7 +198,8 @@ export class SincronizacaoService {
       );
     }
 
-    // ── 1b. Imagens via DbExplorer (SQL Server: image→varbinary→hex) ──────────
+    // ── 1b. Imagens via DbExplorer (dialeto por tenant: Oracle ou SQL Server) ──
+    const dialect = await this.getDialect();
     const codprodsComImagem = await this.dbExplorer.executeQuery(
       `SELECT CODPROD FROM TGFPRO WHERE IMAGEM IS NOT NULL ORDER BY CODPROD`,
     ).catch(() => [] as any[]);
@@ -162,7 +211,7 @@ export class SincronizacaoService {
     const salvarImagem = async (codprod: number): Promise<boolean> => {
       try {
         const rows = await this.dbExplorer.executeQuery(
-          `SELECT CODPROD, DESCRPROD, COMPLDESC, CONVERT(NVARCHAR(MAX), CAST(IMAGEM AS VARBINARY(MAX)), 2) AS IMAGEM_HEX FROM TGFPRO WHERE CODPROD = ${codprod}`,
+          this.sqlImgHex(dialect, `CODPROD = ${codprod}`),
         );
         const row = (rows as any[])[0];
         const hex = row?.IMAGEM_HEX as string | null;
@@ -193,7 +242,7 @@ export class SincronizacaoService {
 
       // Tenta o lote inteiro primeiro (mais rápido)
       const rowsLote = await this.dbExplorer.executeQuery(
-        `SELECT CODPROD, DESCRPROD, COMPLDESC, CONVERT(NVARCHAR(MAX), CAST(IMAGEM AS VARBINARY(MAX)), 2) AS IMAGEM_HEX FROM TGFPRO WHERE CODPROD IN (${ids})`,
+        this.sqlImgHex(dialect, `CODPROD IN (${ids})`),
       ).catch(() => null);
 
       if (rowsLote !== null) {

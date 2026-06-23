@@ -8,12 +8,15 @@ import {
 } from './dto/volume.dto';
 import { SessaoService } from '../sessao/sessao.service';
 import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
+import { TenantService } from 'src/core/tenant/tenant.service';
+import { tenantStorage } from 'src/core/tenant/tenant.context';
 
 @Injectable()
 export class VolumeService {
   constructor(
     private readonly sessaoService: SessaoService,
     private readonly datasetSP: SankhyaDatasetSPClient,
+    private readonly tenantService: TenantService,
   ) {}
 
   private async getSessaoId(numeroConferencia: number): Promise<string> {
@@ -69,17 +72,21 @@ export class VolumeService {
     peso,
   }: PostSalvarGrupoSimplificadoParams) {
     const sessaoId = await this.getSessaoId(numeroConferencia);
+    const slug = tenantStorage.getStore()!;
+    const temAdCubagem = await this.tenantService.hasModulo(slug, 'AD_CUBAGEM');
 
-    await this.datasetSP.save({
-      entityName: 'AD_CUBAGEM',
-      fieldsAndValues: { NUCONF: numeroConferencia, QTDVOL: qtdVol, LARGURA: largura, COMPRIMENTO: comprimento, ALTURA: altura, PESO: peso },
-    }).catch(async () => {
+    if (temAdCubagem) {
       await this.datasetSP.save({
         entityName: 'AD_CUBAGEM',
-        pk: { NUCONF: numeroConferencia },
-        fieldsAndValues: { QTDVOL: qtdVol, LARGURA: largura, COMPRIMENTO: comprimento, ALTURA: altura, PESO: peso },
+        fieldsAndValues: { NUCONF: numeroConferencia, QTDVOL: qtdVol, LARGURA: largura, COMPRIMENTO: comprimento, ALTURA: altura, PESO: peso },
+      }).catch(async () => {
+        await this.datasetSP.save({
+          entityName: 'AD_CUBAGEM',
+          pk: { NUCONF: numeroConferencia },
+          fieldsAndValues: { QTDVOL: qtdVol, LARGURA: largura, COMPRIMENTO: comprimento, ALTURA: altura, PESO: peso },
+        });
       });
-    });
+    }
 
     await this.sessaoService.incrementarQtdVolSimplificado(sessaoId, qtdVol);
   }

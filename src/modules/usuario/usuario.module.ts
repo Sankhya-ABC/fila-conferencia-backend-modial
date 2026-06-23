@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthAppModule } from 'src/core/guards/auth-app/auth-app.module';
 import { AuthUserModule } from 'src/core/guards/auth-user/auth-user.module';
+import { RolesGuard } from 'src/core/guards/auth-user/roles.guard';
 import { SankhyaDatasetSPClientModule } from 'src/http-client/dataset-sp/dataset-sp.module';
 import { GatewayClientModule } from 'src/http-client/gateway/gateway.module';
 import { UsuarioController } from './usuario.controller';
@@ -11,7 +12,7 @@ import { SincronizacaoModule } from '../sincronizacao/sincronizacao.module';
 
 @Module({
   controllers: [UsuarioController],
-  providers: [UsuarioService],
+  providers: [UsuarioService, RolesGuard],
   imports: [
     GatewayClientModule,
     AuthAppModule,

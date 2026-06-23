@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { NoAuthApp } from 'src/core/guards/auth-app/no-auth-app.decorator';
 import { AuthUserGuard } from 'src/core/guards/auth-user/auth-user.guard';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import {
+  GravarPesoItemBody,
   MoverItemVolumeParams,
   PostDevolverItemConferido,
   PostItemConferidoVolume,
@@ -64,6 +65,12 @@ export class SeparacaoController {
   @ApiOperation({ summary: 'Listar Itens Conferidos' })
   getItensConferidos(@Query() queryParam: NumeroConferenciaFilter) {
     return this.service.getItensConferidos(queryParam);
+  }
+
+  @Patch('item-peso')
+  @ApiOperation({ summary: 'Grava PESOBRUTO/PESOLIQ no TGFITE para produto pesável (AD_PESAVEL=S)' })
+  patchItemPeso(@Body() body: GravarPesoItemBody) {
+    return this.service.gravarPesoItem(body);
   }
 
   @Post('resolver-codigo-barras')

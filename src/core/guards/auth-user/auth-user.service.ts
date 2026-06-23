@@ -1,37 +1,52 @@
 import { Injectable } from '@nestjs/common';
+import { RedisService } from 'src/core/redis/redis.service';
 
-type SessionData = {
+export type SessionData = {
   token: string;
   nome: string;
   idUsuario: number;
+  tenant: string;
+  perfil: string;
 };
+
+const TTL = 60 * 60 * 20; // 20 horas
+const keyToken = (token: string) => `sess:token:${token}`;
+const keyUid   = (uid: number)   => `sess:uid:${uid}`;
 
 @Injectable()
 export class AuthUserService {
-  private readonly HOURS = 20;
-  private readonly TTL = 60 * 60 * this.HOURS;
-  private sessions = new Map<number, SessionData>();
+  constructor(private readonly redis: RedisService) {}
 
   async set(idUsuario: number, data: SessionData) {
-    this.sessions.set(idUsuario, data);
-
-    setTimeout(() => {
-      this.sessions.delete(idUsuario);
-    }, this.TTL * 1000);
+    await Promise.all([
+      this.redis.set(keyToken(data.token), data, TTL),
+      this.redis.set(keyUid(idUsuario), data.token, TTL),
+    ]);
   }
 
-  async getByUser(idUsuario: number) {
-    return this.sessions.get(idUsuario);
+  async getByUser(idUsuario: number): Promise<SessionData | null> {
+    const token = await this.redis.get<string>(keyUid(idUsuario));
+    if (!token) return null;
+    return this.redis.get<SessionData>(keyToken(token));
   }
 
-  async getByToken(token: string) {
-    for (const session of this.sessions.values()) {
-      if (session.token === token) return session;
-    }
-    return null;
+  async getByToken(token: string): Promise<SessionData | null> {
+    return this.redis.get<SessionData>(keyToken(token));
   }
 
   async delete(idUsuario: number) {
-    this.sessions.delete(idUsuario);
+    const token = await this.redis.get<string>(keyUid(idUsuario));
+    const toDelete = [keyUid(idUsuario)];
+    if (token) toDelete.push(keyToken(token));
+    await this.redis.del(...toDelete);
+  }
+
+  async deleteByToken(token: string) {
+    const session = await this.getByToken(token);
+    if (session) {
+      await this.delete(session.idUsuario);
+    } else {
+      await this.redis.del(keyToken(token));
+    }
   }
 }

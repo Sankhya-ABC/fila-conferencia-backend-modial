@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import {
+  GravarPesoItemBody,
   MoverItemVolumeParams,
   PostDevolverItemConferido,
   PostItemConferidoVolume,
@@ -22,8 +23,9 @@ export class SeparacaoService {
     numeroVolume,
     idProduto,
     controle,
-    quantidadeConvertida,
+    quantidadePadrao,
     unidade,
+    peso,
   }: PostItemConferidoVolume) {
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
@@ -34,8 +36,9 @@ export class SeparacaoService {
       idProduto,
       unidade,
       controle: controle?.trim() || ' ',
-      qtd: quantidadeConvertida,
-      qtdVolpad: quantidadeConvertida,
+      qtd: quantidadePadrao,
+      qtdVolpad: quantidadePadrao,
+      peso,
     });
   }
 
@@ -77,6 +80,10 @@ export class SeparacaoService {
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
     return this.sessaoService.getItensConferidos(sessao.id);
+  }
+
+  async gravarPesoItem({ nunota, sequencia, pesobruto, pesoliq }: GravarPesoItemBody) {
+    await this.conferenciaHelper.gravarPesoItem({ nunota, sequencia, pesobruto, pesoliq });
   }
 
   async resolverCodigoBarras({ numeroConferencia, codigoBarras }: ResolverCodigoBarrasDto) {

@@ -47,4 +47,10 @@ export class ConferenciaController {
   postFinalizarConferencia(@Body() body: NumeroConferenciaFilter) {
     return this.service.postFinalizarConferencia(body);
   }
+
+  @Post('excluir-sessao')
+  @ApiOperation({ summary: 'Excluir sessão local e cancelar conferência no Sankhya' })
+  excluirSessao(@Body() body: NumeroUnicoFilter) {
+    return this.service.excluirSessao(body);
+  }
 }

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { NumeroConferenciaFilter } from '../dto/model';
@@ -7,6 +7,7 @@ import { SessaoService } from '../sessao/sessao.service';
 
 @Injectable()
 export class ArquivoHelper {
+  private readonly logger = new Logger(ArquivoHelper.name);
   private imagemCache = new Map<number, CacheItem>();
 
   constructor(
@@ -141,7 +142,7 @@ export class ArquivoHelper {
 
     const cabRows = this.loadRecords.parseEntities(cabRaw);
     const cab = cabRows[0];
-    console.log('[etiqueta] cab:', JSON.stringify(cab));
+    this.logger.debug(`[etiqueta] cab: NUNOTA=${cab?.NUNOTA} CODPARC=${cab?.CODPARC}`);
 
     const codParc = cab ? Number(cab.CODPARC) : null;
     let razaoSocial: string | null = null;
@@ -160,7 +161,7 @@ export class ArquivoHelper {
       if (parcRaw) {
         const parcRows = this.loadRecords.parseEntities(parcRaw);
         const parc = parcRows[0];
-        console.log('[etiqueta] parc:', JSON.stringify(parc));
+        this.logger.debug(`[etiqueta] parc: RAZAOSOCIAL=${parc?.RAZAOSOCIAL} UF=${parc?.['Cidade_UF']}`);
         razaoSocial = parc?.RAZAOSOCIAL ?? null;
         const coduf = parc?.['Cidade_UF'] ?? null;
 

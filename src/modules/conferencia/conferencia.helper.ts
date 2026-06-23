@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
 import { SankhyaDBExplorerSPClient } from 'src/http-client/db-explorer-sp/db-explorer-sp.client';
@@ -14,6 +14,8 @@ type LoadRecordsParams = Parameters<SankhyaLoadRecordsClient['loadRecords']>[0];
 
 @Injectable()
 export class ConferenciaHelper {
+  private readonly logger = new Logger(ConferenciaHelper.name);
+
   constructor(
     private readonly loadRecords: SankhyaLoadRecordsClient,
     private readonly datasetSP: SankhyaDatasetSPClient,
@@ -120,7 +122,7 @@ export class ConferenciaHelper {
       });
     } catch (err: any) {
       const detalhe = err?.response?.data ?? err?.message ?? String(err);
-      console.error('[atualizarCabecalhoConferencia] erro Sankhya:', JSON.stringify(detalhe));
+      this.logger.error('[atualizarCabecalhoConferencia] erro Sankhya', JSON.stringify(detalhe));
       throw new BadRequestException(`Erro ao criar cabeçalho da conferência. Detalhe: ${JSON.stringify(detalhe)}`);
     }
   }
@@ -158,7 +160,7 @@ export class ConferenciaHelper {
       rootEntity: 'ItemNota',
       fieldset: 'SEQUENCIA,CODPROD,CODVOL,CONTROLE,QTDNEG,QTDENTREGUE,QTDCONFERIDA',
       criteria: { expression: 'NUNOTA = ?', parameters: [{ value: numeroUnico, type: 'I' }] },
-      joins: [{ path: 'Produto', fieldset: 'DESCRPROD,COMPLDESC,MARCA,REFERENCIA,DECQTD,TIPCONTEST,PESOBRUTO,EXCLUIRCONF,LISCONTEST' }],
+      joins: [{ path: 'Produto', fieldset: 'DESCRPROD,COMPLDESC,MARCA,REFERENCIA,DECQTD,TIPCONTEST,PESOBRUTO,EXCLUIRCONF,LISCONTEST,AD_PESAVEL,CODVOL' }],
     });
     const voaPromise = this.fetchAllPages({
       rootEntity: 'VolumeAlternativo',
@@ -175,6 +177,22 @@ export class ConferenciaHelper {
     const estPromise = this.dbExplorer.executeQuery(
       `SELECT DISTINCT CODPROD, CONTROLE, CODBARRA FROM TGFEST WHERE CODPROD IN (SELECT CODPROD FROM TGFITE WHERE NUNOTA = ${nunota}) AND CODBARRA IS NOT NULL`,
     ).catch(() => [] as Record<string, any>[]);
+
+    const volPromise = this.loadRecords.loadRecords({
+      rootEntity: 'Volume',
+      fieldset: 'CODVOL,UTILICONFPESO',
+      criteria: {
+        expression: 'CODVOL IN (SELECT DISTINCT CODVOL FROM TGFITE WHERE NUNOTA = ?) OR CODVOL IN (SELECT DISTINCT p.CODVOL FROM TGFPRO p WHERE p.CODPROD IN (SELECT CODPROD FROM TGFITE WHERE NUNOTA = ?))',
+        parameters: [
+          { value: numeroUnico, type: 'I' },
+          { value: numeroUnico, type: 'I' },
+        ],
+      },
+    }).then(raw => this.loadRecords.parseEntities(raw))
+      .catch((err: any) => {
+        this.logger.warn(`[carregarSessao] falha ao buscar TGFVOL.UTILICONFPESO: ${err?.message ?? err}`);
+        return [] as Record<string, any>[];
+      });
 
     // Cabeçalho em paralelo com as demais (necessário para obter NUCCO → CCO)
     const cabRaw = await this.loadRecords.loadRecords({
@@ -198,8 +216,8 @@ export class ConferenciaHelper {
         }).catch(() => null)
       : Promise.resolve(null);
 
-    const [itemRows, voaRows, barRaw, estRows, ccoRaw] = await Promise.all([
-      itemsPromise, voaPromise, barPromise, estPromise, ccoPromise,
+    const [itemRows, voaRows, barRaw, estRows, ccoRaw, volRows] = await Promise.all([
+      itemsPromise, voaPromise, barPromise, estPromise, ccoPromise, volPromise,
     ]);
 
     // Determina regra de busca de código de barras
@@ -219,8 +237,15 @@ export class ConferenciaHelper {
     const voaMap = new Map<string, { codvol: string; divideMult: string | null; quantidade: number | null }>();
     for (const v of voaRows) {
       const controle = String(v.CONTROLE ?? ' ').trim() || ' ';
-      const entry = { codvol: v.CODVOL, divideMult: v.DIVIDEMULTIPLICA ?? null, quantidade: v.QUANTIDADE != null ? Number(v.QUANTIDADE) : null };
-      voaMap.set(`${v.CODPROD}|${v.CODVOL}|${controle}`, entry);
+      const codvolVoa = String(v.CODVOL ?? '').trim();
+      const entry = { codvol: codvolVoa, divideMult: v.DIVIDEMULTIPLICA ?? null, quantidade: v.QUANTIDADE != null ? Number(v.QUANTIDADE) : null };
+      voaMap.set(`${v.CODPROD}|${codvolVoa}|${controle}`, entry);
+    }
+    // Mapa CODVOL → usaConfPeso (TGFVOL.UTILICONFPESO = 'S')
+    const volConfPesoMap = new Map<string, boolean>();
+    for (const v of volRows as Record<string, any>[]) {
+      const codvol = String(v.CODVOL ?? '').trim();
+      if (codvol) volConfPesoMap.set(codvol, String(v.UTILICONFPESO ?? 'N') === 'S');
     }
 
     // Normaliza itens (exclui produtos marcados EXCLUIRCONF=S)
@@ -228,7 +253,11 @@ export class ConferenciaHelper {
       .filter((item) => (item['Produto_EXCLUIRCONF'] ?? 'N') !== 'S')
       .map((item) => {
         const controle = String(item.CONTROLE ?? ' ').trim() || ' ';
-        const voa = voaMap.get(`${item.CODPROD}|${item.CODVOL}|${controle}`) ?? null;
+        const codvolItem = String(item.CODVOL ?? '').trim();
+        // Fallback para VOA sem controle específico quando o item tem lote
+        const voa = voaMap.get(`${item.CODPROD}|${codvolItem}|${controle}`)
+          ?? voaMap.get(`${item.CODPROD}|${codvolItem}| `)
+          ?? null;
         return {
           SEQUENCIA: item.SEQUENCIA,
           CODPROD: item.CODPROD,
@@ -247,6 +276,9 @@ export class ConferenciaHelper {
           LISCONTEST: item['Produto_LISCONTEST'],
           DIVIDEMULTIPLICA: voa?.divideMult ?? null,
           FATOR_CONVERSAO: voa?.quantidade ?? null,
+          CODVOL_PADRAO: item['Produto_CODVOL'] ? String(item['Produto_CODVOL']).trim() : null,
+          UTILICONFPESO: volConfPesoMap.get(String(item['Produto_CODVOL'] ?? item.CODVOL ?? '').trim()) ?? false,
+          PESAVEL: String(item['Produto_AD_PESAVEL'] ?? 'N') === 'S',
           IMAGEM: null as string | null,
         };
       });
@@ -311,10 +343,42 @@ export class ConferenciaHelper {
       }
     }
 
+    // ─── UMAs por produto (apenas produtos com usaConfPeso) ───────────────────
+    const umaMap = new Map<number, Array<{codUma: string; descricao: string; peso: number|null; codVol: string|null; codBarra: string|null; padrao: boolean}>>();
+    const confPesoCodprods = [...new Set(itens.filter(i => i.UTILICONFPESO === true).map(i => Number(i.CODPROD)))];
+    if (confPesoCodprods.length > 0) {
+      try {
+        const umaRaw = await this.loadRecords.loadRecords({
+          rootEntity: 'UnidadeMovArmazenagemProduto',
+          fieldset: 'CODPROD,CODUMA,CODBARRA,CODVOL,PADRAO',
+          criteria: {
+            expression: 'CODPROD IN (SELECT CODPROD FROM TGFITE WHERE NUNOTA = ?)',
+            parameters: [{ value: numeroUnico, type: 'I' }],
+          },
+          joins: [{ path: 'UnidadeMovimentacaoArmazenagem', fieldset: 'DESCRUMA,PESO' }],
+        });
+        for (const u of this.loadRecords.parseEntities(umaRaw)) {
+          const cp = Number(u.CODPROD);
+          if (!umaMap.has(cp)) umaMap.set(cp, []);
+          umaMap.get(cp)!.push({
+            codUma:   String(u.CODUMA ?? '').trim(),
+            descricao: String(u['UnidadeMovimentacaoArmazenagem_DESCRUMA'] ?? '').trim(),
+            peso:     u['UnidadeMovimentacaoArmazenagem_PESO'] != null ? Number(u['UnidadeMovimentacaoArmazenagem_PESO']) : null,
+            codVol:   u.CODVOL  ? String(u.CODVOL).trim()  : null,
+            codBarra: u.CODBARRA ? String(u.CODBARRA).trim() : null,
+            padrao:   String(u.PADRAO ?? 'N') === 'S',
+          });
+        }
+      } catch {
+        // UMAs são informação de apoio — prossegue sem elas em caso de erro
+      }
+    }
+
     await this.sessaoService.criarSessao({
       numeroUnico, numeroConferencia, idUsuario,
       codigoTipoMovimento, descricaoTipoOperacao, formacaoVolumes, buscarCodigoBarraPor,
-      itens, codigos,
+      itens: itens.map(i => ({ ...i, UMAS: umaMap.get(Number(i.CODPROD)) ?? [] })),
+      codigos,
     });
   }
 
@@ -378,6 +442,15 @@ export class ConferenciaHelper {
     }
 
     return codigos;
+  }
+
+  async gravarPesoItem(params: { nunota: number; sequencia: number; pesobruto: number; pesoliq: number }) {
+    const { nunota, sequencia, pesobruto, pesoliq } = params;
+    await this.datasetSP.save({
+      entityName: 'ItemNota',
+      pk: { NUNOTA: nunota, SEQUENCIA: sequencia },
+      fieldsAndValues: { PESOBRUTO: pesobruto, PESOLIQ: pesoliq },
+    });
   }
 
   private async fetchAllPages(params: LoadRecordsParams): Promise<Record<string, any>[]> {

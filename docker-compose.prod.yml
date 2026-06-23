@@ -14,13 +14,12 @@ services:
     env_file:
       - .env
 
-    environment:
-      DATABASE_URL: "postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
-
     command: sh -c "npx prisma migrate deploy && node dist/src/main"
 
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   db:
@@ -33,6 +32,8 @@ services:
     env_file:
       - .env
 
+    command: postgres -c max_connections=300
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -42,5 +43,22 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: fila-conf-redis
+    restart: unless-stopped
+
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   postgres_data:
+  redis_data:

@@ -6,6 +6,7 @@ import { VolumeService } from './volume.service';
 import { AuthUserModule } from 'src/core/guards/auth-user/auth-user.module';
 import { SessaoModule } from '../sessao/sessao.module';
 import { SankhyaDatasetSPClientModule } from 'src/http-client/dataset-sp/dataset-sp.module';
+import { TenantModule } from 'src/core/tenant/tenant.module';
 
 @Module({
   controllers: [VolumeController],
@@ -16,6 +17,7 @@ import { SankhyaDatasetSPClientModule } from 'src/http-client/dataset-sp/dataset
     AuthUserModule,
     SessaoModule,
     SankhyaDatasetSPClientModule,
+    TenantModule,
   ],
 })
 export class VolumeModule {}

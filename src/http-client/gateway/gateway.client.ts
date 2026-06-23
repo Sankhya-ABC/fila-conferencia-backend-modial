@@ -1,37 +1,36 @@
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import axios, {
-  AxiosHeaders,
-  AxiosInstance,
-  InternalAxiosRequestConfig,
-} from 'axios';
+import axios, { AxiosHeaders, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import * as http from 'http';
+import * as https from 'https';
 import { AuthAppService } from 'src/core/guards/auth-app/auth-app.service';
+import { tenantStorage } from 'src/core/tenant/tenant.context';
+import { TenantService } from 'src/core/tenant/tenant.service';
 
 @Injectable()
 export class GatewayClient {
   public readonly client: AxiosInstance;
 
   constructor(
-    config: ConfigService,
-    private authAppService: AuthAppService,
+    private readonly tenantService: TenantService,
+    private readonly authAppService: AuthAppService,
   ) {
     this.client = axios.create({
-      baseURL: `${config.getOrThrow('SNK_HOST')}/${config.getOrThrow('SNK_GATEWAY')}`,
       timeout: 30000,
+      // Reutiliza conexões TCP — evita handshake a cada chamada ao Sankhya
+      httpAgent:  new http.Agent({ keepAlive: true, maxSockets: 50 }),
+      httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 50 }),
     });
 
     this.client.interceptors.request.use(
       async (req: InternalAxiosRequestConfig) => {
+        const slug = tenantStorage.getStore()!;
+        const cfg = await this.tenantService.getConfig(slug);
         const token = await this.authAppService.getValidToken();
 
+        req.baseURL = `${cfg.snkHost}/${cfg.snkGateway}`;
         req.headers = new AxiosHeaders(req.headers);
         req.headers.set('Authorization', `Bearer ${token}`);
         req.headers.set('Content-Type', 'application/json');
-
-        // console.log('--- SANKHYA REQUEST ---');
-        // console.log('URL:', `${req.baseURL}${req.url}`);
-        // console.log('BODY:', JSON.stringify(req.data));
-        // console.log('----------------------');
 
         return req;
       },
@@ -39,13 +38,7 @@ export class GatewayClient {
 
     this.client.interceptors.response.use(
       (res) => res,
-      (error) => {
-        // console.error('--- SANKHYA ERROR ---');
-        // console.error('STATUS:', error?.response?.status);
-        // console.error('RESPONSE:', error?.response?.data);
-        // console.error('---------------------');
-        return Promise.reject(error);
-      },
+      (error) => Promise.reject(error),
     );
   }
 }

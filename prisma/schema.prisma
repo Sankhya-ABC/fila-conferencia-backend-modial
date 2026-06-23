@@ -13,6 +13,11 @@ enum Perfil {
   SEPARADOR
 }
 
+enum DbDialect {
+  SQLSERVER
+  ORACLE
+}
+
 model User {
   id           String   @id @default(uuid())
 
@@ -78,6 +83,7 @@ model SessaoConferencia {
   volumes  SessaoVolume[]
   leituras SessaoLeitura[]
   codigos  SessaoCodigoBarras[]
+  itensUma SessaoItemUma[]
 }
 
 model SessaoItem {
@@ -92,6 +98,7 @@ model SessaoItem {
   marca               String?
   referencia          String?
   unidade             String
+  unidadePadrao       String?
   controle            String    @default(" ")
   tipControle         String?
   decQtd              Int       @default(0)
@@ -106,6 +113,8 @@ model SessaoItem {
   fatorConv    Float?
   imagem       String?
   lisControles String?
+  usaConfPeso  Boolean   @default(false)
+  pesavel      Boolean   @default(false)
 
   @@unique([sessaoId, sequencia])
 }
@@ -137,7 +146,44 @@ model SessaoLeitura {
   codigoBarras String?
   qtd          Float
   qtdVolpad    Float
+  peso         Float?
   criadoEm     DateTime  @default(now())
+}
+
+model Balanca {
+  id              String  @id @default(uuid())
+  nome            String
+  fabricante      String  @default("Toledo")
+  modelo          String?
+  tipoComunicacao String  @default("HTTP") // SERIAL_RS232 | SERIAL_USB | HTTP | TOLEDO_TCP
+  // Serial
+  portaCom        String?
+  baudRate        Int     @default(4800)
+  dataBits        Int     @default(8)
+  paridade        String  @default("NONE")
+  stopBits        Int     @default(1)
+  protocoloSerial String  @default("P05")
+  // Network (backward compat)
+  protocolo       String  @default("HTTP")
+  ip              String?
+  porta           Int?
+  rota            String  @default("/peso")
+  ativo           Boolean @default(true)
+}
+
+model SessaoItemUma {
+  id        String            @id @default(uuid())
+  sessaoId  String
+  sessao    SessaoConferencia @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+  idProduto Int
+  codUma    String
+  descricao String
+  peso      Float?
+  codVol    String?
+  codBarra  String?
+  padrao    Boolean           @default(false)
+
+  @@unique([sessaoId, idProduto, codUma])
 }
 
 model SessaoCodigoBarras {
@@ -186,4 +232,36 @@ model CodigoBarrasCache {
   origem      String   @default("BAR")
 
   @@unique([codigoBarra, idProduto, controle, origem])
+}
+
+// ─── Multitenancy (usados apenas no DB admin) ────────────────────────────────
+
+model MasterUser {
+  id       String  @id @default(uuid())
+  email    String  @unique
+  nome     String
+  senha    String
+  ativo    Boolean @default(true)
+}
+
+model Tenant {
+  slug            String       @id
+  nome            String
+  ativo           Boolean      @default(true)
+  dbUrl           String
+  snkHost         String
+  snkGateway      String
+  snkXToken       String
+  snkClientId     String
+  snkClientSecret String
+  dbDialect       DbDialect    @default(SQLSERVER)
+  snkModulos      String       @default("AD_NUMTALAO,AD_TIPOENTREGA,AD_CUBAGEM")
+  criadoEm        DateTime     @default(now())
+  usuarios        TenantUser[]
+}
+
+model TenantUser {
+  email      String  @id
+  tenantSlug String
+  tenant     Tenant  @relation(fields: [tenantSlug], references: [slug])
 }

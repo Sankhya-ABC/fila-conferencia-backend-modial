@@ -3,6 +3,15 @@ import { PrismaService } from 'prisma/prisma.service';
 
 // ─── Tipos do cache em memória ───────────────────────────────────────────────
 
+type UmaCached = {
+  codUma: string;
+  descricao: string;
+  peso: number | null;
+  codVol: string | null;
+  codBarra: string | null;
+  padrao: boolean;
+};
+
 type ItemCached = {
   idProduto: number;
   nomeProduto: string;
@@ -16,6 +25,9 @@ type ItemCached = {
   divideMult: string | null;
   fatorConv: number | null;
   lisControles: string | null;
+  usaConfPeso: boolean;
+  pesavel: boolean;
+  umas: UmaCached[];
 };
 
 type CodigoCached = {
@@ -115,6 +127,19 @@ export class SessaoService {
         select: { id: true },
       });
 
+      const umaData = itens.flatMap((item) =>
+        (item.UMAS ?? []).map((u: any) => ({
+          sessaoId: s.id,
+          idProduto: Number(item.CODPROD),
+          codUma: u.codUma,
+          descricao: u.descricao,
+          peso: u.peso ?? null,
+          codVol: u.codVol ?? null,
+          codBarra: u.codBarra ?? null,
+          padrao: u.padrao,
+        })),
+      );
+
       await Promise.all([
         tx.sessaoItem.createMany({
           data: itens.map((item) => ({
@@ -126,6 +151,7 @@ export class SessaoService {
             marca: item.MARCA || null,
             referencia: item.REFERENCIA || null,
             unidade: item.CODVOL || 'UN',
+            unidadePadrao: item.CODVOL_PADRAO || null,
             controle: item.CONTROLE?.trim() || ' ',
             tipControle: item.TIPCONTEST || null,
             decQtd: Number(item.DECQTD) || 0,
@@ -137,6 +163,8 @@ export class SessaoService {
             divideMult: item.DIVIDEMULTIPLICA || null,
             fatorConv: item.FATOR_CONVERSAO != null ? Number(item.FATOR_CONVERSAO) : null,
             lisControles: item.LISCONTEST?.trim() || null,
+            usaConfPeso: item.UTILICONFPESO === true || item.UTILICONFPESO === 'S',
+            pesavel: item.PESAVEL === true || item.PESAVEL === 'S',
             imagem: item.IMAGEM
               ? (item.IMAGEM.startsWith('data:') || item.IMAGEM.startsWith('http')
                   ? item.IMAGEM
@@ -160,6 +188,9 @@ export class SessaoService {
           ],
           skipDuplicates: true,
         }),
+        umaData.length > 0
+          ? tx.sessaoItemUma.createMany({ data: umaData, skipDuplicates: true })
+          : Promise.resolve(),
       ]);
 
       return s;
@@ -182,6 +213,12 @@ export class SessaoService {
         divideMult: item.DIVIDEMULTIPLICA || null,
         fatorConv: item.FATOR_CONVERSAO != null ? Number(item.FATOR_CONVERSAO) : null,
         lisControles: item.LISCONTEST?.trim() || null,
+        usaConfPeso: item.UTILICONFPESO === true || item.UTILICONFPESO === 'S',
+        pesavel: item.PESAVEL === true || item.PESAVEL === 'S',
+        umas: (item.UMAS ?? []).map((u: any): UmaCached => ({
+          codUma: u.codUma, descricao: u.descricao, peso: u.peso ?? null,
+          codVol: u.codVol ?? null, codBarra: u.codBarra ?? null, padrao: u.padrao,
+        })),
       })),
       codigos: codigos.map((c): CodigoCached => ({
         codigoBarra: String(c.CODBARRA || c.CODIGO || '').trim(),
@@ -209,21 +246,32 @@ export class SessaoService {
         select: {
           buscarCodigoBarraPor: true,
           codigos: true,
+          itensUma: true,
           itens: {
             select: {
               idProduto: true, nomeProduto: true, complemento: true, referencia: true,
               unidade: true, controle: true, tipControle: true, decQtd: true,
               pesoBruto: true, divideMult: true, fatorConv: true, lisControles: true,
+              usaConfPeso: true, pesavel: true,
             },
           },
         },
       });
       if (!sessao) return null;
 
+      const umasByProd = new Map<number, UmaCached[]>();
+      for (const u of sessao.itensUma) {
+        if (!umasByProd.has(u.idProduto)) umasByProd.set(u.idProduto, []);
+        umasByProd.get(u.idProduto)!.push({
+          codUma: u.codUma, descricao: u.descricao, peso: u.peso,
+          codVol: u.codVol, codBarra: u.codBarra, padrao: u.padrao,
+        });
+      }
+
       cached = {
         buscarCodigoBarraPor: sessao.buscarCodigoBarraPor,
         codigosCarregados: sessao.codigos.some((c) => c.origem === 'LOADED'),
-        itens: sessao.itens,
+        itens: sessao.itens.map(i => ({ ...i, pesavel: i.pesavel ?? false, umas: umasByProd.get(i.idProduto) ?? [] })),
         codigos: sessao.codigos,
       };
       this.sessaoCache.set(sessaoId, cached);
@@ -251,6 +299,9 @@ export class SessaoService {
       fatorConv,
       divideMult,
       lisControles: item.lisControles,
+      usaConfPeso: item.usaConfPeso ?? false,
+      pesavel: item.pesavel ?? false,
+      umas: item.umas ?? [],
     });
 
     const findItem = (idProduto: number, controle?: string | null) => {
@@ -429,6 +480,11 @@ export class SessaoService {
     this.sessaoCache.delete(sessaoId);
   }
 
+  async excluirSessao(sessaoId: string) {
+    await this.prisma.sessaoConferencia.delete({ where: { id: sessaoId } });
+    this.sessaoCache.delete(sessaoId);
+  }
+
   // ─────────────────────────────────────────────
   // Leituras (barcode scan)
   // ─────────────────────────────────────────────
@@ -442,14 +498,15 @@ export class SessaoService {
     codigoBarras?: string;
     qtd: number;
     qtdVolpad: number;
+    peso?: number;
   }) {
-    const { sessaoId, seqVol, idProduto, unidade, controle, codigoBarras, qtd, qtdVolpad } = params;
+    const { sessaoId, seqVol, idProduto, unidade, controle, codigoBarras, qtd, qtdVolpad, peso } = params;
     const controleNorm = controle?.trim() || ' ';
 
     await this.garantirVolume(sessaoId, seqVol);
 
     await this.prisma.sessaoLeitura.create({
-      data: { sessaoId, seqVol, idProduto, unidade, controle: controleNorm, codigoBarras: codigoBarras || null, qtd, qtdVolpad },
+      data: { sessaoId, seqVol, idProduto, unidade, controle: controleNorm, codigoBarras: codigoBarras || null, qtd, qtdVolpad, peso: peso ?? null },
     });
 
     await this.recalcularQtdItem(sessaoId, idProduto, controleNorm);
@@ -639,10 +696,10 @@ export class SessaoService {
         select: {
           id: true, sessaoId: true, sequencia: true, idProduto: true,
           nomeProduto: true, complemento: true, marca: true, referencia: true,
-          unidade: true, controle: true, tipControle: true, decQtd: true,
+          unidade: true, unidadePadrao: true, controle: true, tipControle: true, decQtd: true,
           pesoBruto: true, qtdNeg: true, qtdEntregue: true,
           qtdConferidaSankhya: true, qtdConferidaLocal: true,
-          divideMult: true, fatorConv: true, lisControles: true,
+          divideMult: true, fatorConv: true, lisControles: true, usaConfPeso: true, pesavel: true,
         },
       }),
       this.prisma.sessaoCodigoBarras.findMany({ where: { sessaoId } }),
@@ -653,22 +710,29 @@ export class SessaoService {
     for (const item of itens) {
       const fator = item.fatorConv ?? 1;
 
-      let qtdConvertida = item.qtdNeg;
-      if (item.divideMult === 'D') qtdConvertida = item.qtdNeg * fator;
-      else if (item.divideMult === 'M' && fator !== 0) qtdConvertida = item.qtdNeg / fator;
+      // Sankhya armazena TGFITE.QTDNEG sempre na unidade PADRÃO.
+      // A quantidade comercial é derivada: pad → comercial
+      // M: comercial = padrão / fator  |  D: comercial = padrão * fator
+      const qtdPadrao = item.qtdNeg;
+      let qtdComercial = item.qtdNeg;
+      if (item.divideMult === 'M' && fator !== 0) qtdComercial = item.qtdNeg / fator;
+      else if (item.divideMult === 'D') qtdComercial = item.qtdNeg * fator;
 
-      let qtdSankhyaConv = item.qtdConferidaSankhya;
-      if (item.divideMult === 'D') qtdSankhyaConv = item.qtdConferidaSankhya * fator;
-      else if (item.divideMult === 'M' && fator !== 0) qtdSankhyaConv = item.qtdConferidaSankhya / fator;
+      // Conferidas: qtdConferidaSankhya (TGFITE.QTDCONFERIDA) e qtdConferidaLocal (sessaoLeitura.qtd)
+      // ambas em unidade PADRÃO.
+      const qtdPadraoConferida = item.qtdConferidaSankhya + item.qtdConferidaLocal;
 
-      const qtdConvertidaConferida = qtdSankhyaConv + item.qtdConferidaLocal;
+      if (Number(qtdPadrao.toFixed(5)) <= Number(qtdPadraoConferida.toFixed(5)) && item.qtdConferidaLocal === 0) continue;
 
-      if (Number(qtdConvertida.toFixed(5)) <= Number(qtdConvertidaConferida.toFixed(5)) && item.qtdConferidaLocal === 0) continue;
+      let qtdComercialSankhya = item.qtdConferidaSankhya;
+      if (item.divideMult === 'M' && fator !== 0) qtdComercialSankhya = item.qtdConferidaSankhya / fator;
+      else if (item.divideMult === 'D') qtdComercialSankhya = item.qtdConferidaSankhya * fator;
 
-      let qtdLocalBase = item.qtdConferidaLocal;
-      if (item.divideMult === 'D' && fator !== 0) qtdLocalBase = item.qtdConferidaLocal / fator;
-      else if (item.divideMult === 'M') qtdLocalBase = item.qtdConferidaLocal * fator;
-      const qtdBaseConferida = item.qtdConferidaSankhya + qtdLocalBase;
+      let qtdComercialLocal = item.qtdConferidaLocal;
+      if (item.divideMult === 'M' && fator !== 0) qtdComercialLocal = item.qtdConferidaLocal / fator;
+      else if (item.divideMult === 'D') qtdComercialLocal = item.qtdConferidaLocal * fator;
+
+      const qtdComercialConferida = qtdComercialSankhya + qtdComercialLocal;
 
       const itemCodigos = codigos
         .filter((c) => c.idProduto === item.idProduto && c.controle === item.controle)
@@ -680,15 +744,20 @@ export class SessaoService {
         complemento: item.complemento,
         marca: item.marca,
         referencia: item.referencia,
-        unidade: item.unidade,
+        unidadeComercial: item.unidade,
+        unidadePadrao: item.unidadePadrao ?? item.unidade,
         controle: item.controle,
-        quantidadeBase: item.qtdNeg,
-        quantidadeConvertida: Number(qtdConvertida.toFixed(5)),
-        quantidadeBaseConferida: Number(qtdBaseConferida.toFixed(5)),
-        quantidadeConvertidaConferida: Number(qtdConvertidaConferida.toFixed(5)),
+        tipControle: item.tipControle ?? null,
+        quantidadeComercial: Number(qtdComercial.toFixed(5)),
+        quantidadePadrao: Number(qtdPadrao.toFixed(5)),
+        quantidadeComercialConferida: Number(qtdComercialConferida.toFixed(5)),
+        quantidadePadraoConferida: Number(qtdPadraoConferida.toFixed(5)),
         codigoBarras: [...new Set(itemCodigos)],
-        imagem: null, // carregado via lazy load em /separacoes/imagens-itens
+        imagem: null,
         lisControles: item.lisControles ?? null,
+        usaConfPeso: item.usaConfPeso,
+        pesavel: item.pesavel,
+        sequencia: item.sequencia,
       });
     }
 
@@ -705,7 +774,7 @@ export class SessaoService {
     return grupos.map((g) => ({
       idProduto: g.idProduto,
       controle: g.controle,
-      quantidadeConvertida: g._sum.qtd ?? 0,
+      quantidadePadrao: g._sum.qtd ?? 0,
     }));
   }
 
@@ -724,16 +793,17 @@ export class SessaoService {
       const volItens = volLeituras.map((l) => {
         const item = itens.find((i) => i.idProduto === l.idProduto && i.controle === l.controle);
         const fator = item?.fatorConv ?? 1;
+        // Conversão padrão→alt (inverso de alt→pad): M→(pad/fator=alt), D→(pad×fator=alt)
         let qtdBase = l.qtd;
-        if (item?.divideMult === 'D' && fator !== 0) qtdBase = l.qtd / fator;
-        else if (item?.divideMult === 'M') qtdBase = l.qtd * fator;
+        if (item?.divideMult === 'M' && fator !== 0) qtdBase = l.qtd / fator;
+        else if (item?.divideMult === 'D') qtdBase = l.qtd * fator;
 
         return {
           idProduto: l.idProduto,
           descricaoProduto: item?.nomeProduto ?? '',
           imagem: item?.imagem || null,
-          quantidadeConvertida: l.qtd,
-          quantidadeBase: Number(qtdBase.toFixed(5)),
+          quantidadePadrao: l.qtd,
+          quantidadeComercial: Number(qtdBase.toFixed(5)),
           unidade: l.unidade,
           controle: l.controle,
         };
@@ -744,8 +814,8 @@ export class SessaoService {
         const key = `${it.idProduto}|${it.controle}`;
         if (agrupados.has(key)) {
           const existing = agrupados.get(key)!;
-          existing.quantidadeConvertida += it.quantidadeConvertida;
-          existing.quantidadeBase += it.quantidadeBase;
+          existing.quantidadePadrao += it.quantidadePadrao;
+          existing.quantidadeComercial += it.quantidadeComercial;
         } else {
           agrupados.set(key, { ...it });
         }

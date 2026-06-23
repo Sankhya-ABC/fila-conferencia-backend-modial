@@ -10,6 +10,7 @@ import { SankhyaDBExplorerSPClientModule } from 'src/http-client/db-explorer-sp/
 import { ConferenciaHelper } from './conferencia.helper';
 import { SessaoModule } from '../sessao/sessao.module';
 import { PrismaModule } from 'prisma/prisma.module';
+import { TenantModule } from 'src/core/tenant/tenant.module';
 
 @Module({
   controllers: [ConferenciaController],
@@ -24,6 +25,7 @@ import { PrismaModule } from 'prisma/prisma.module';
     SankhyaDBExplorerSPClientModule,
     SessaoModule,
     PrismaModule,
+    TenantModule,
   ],
 })
 export class ConferenciaModule {}

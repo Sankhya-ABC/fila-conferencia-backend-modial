@@ -40,14 +40,15 @@ async function bootstrap() {
 
   app.useGlobalInterceptors(new LoggerInterceptor(logger));
 
-  const config = new DocumentBuilder()
-    .setTitle('Fila de Conferência')
-    .setDescription('API orquestradora de Fila de Conferência')
-    .setVersion('1.0.0')
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('Fila de Conferência')
+      .setDescription('API orquestradora de Fila de Conferência')
+      .setVersion('1.0.0')
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   await app.listen(3000, '0.0.0.0');
 }

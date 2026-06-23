@@ -47,12 +47,18 @@ export class PostItemConferidoVolume {
   @Type(() => Number)
   @IsNumber()
   @IsNotEmpty()
-  quantidadeConvertida: number;
+  quantidadePadrao: number;
 
   @ApiProperty({ example: 'UN' })
   @IsString()
   @IsNotEmpty()
   unidade: string;
+
+  @ApiProperty({ example: 1.5, required: false })
+  @Type(() => Number)
+  @IsNumber()
+  @IsOptional()
+  peso?: number;
 }
 
 export class PostDevolverItemConferido {
@@ -76,7 +82,6 @@ export class PostDevolverItemConferido {
 
   @ApiProperty({ example: 'Rosa' })
   @IsString()
-  @IsNotEmpty()
   controle: string;
 }
 
@@ -122,6 +127,32 @@ export class MoverItemVolumeParams {
   qtd?: number;
 }
 
+export class GravarPesoItemBody {
+  @ApiProperty({ example: 12345 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  nunota: number;
+
+  @ApiProperty({ example: 1 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  sequencia: number;
+
+  @ApiProperty({ example: 2.450 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  pesobruto: number;
+
+  @ApiProperty({ example: 2.450 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsNotEmpty()
+  pesoliq: number;
+}
+
 export class ResolverCodigoBarrasDto {
   @ApiProperty({ example: 1234 })
   @Type(() => Number)
@@ -151,7 +182,7 @@ export class AtualizarItemConferidoVolumeParams extends PostRemoverVolumeParams 
   @Type(() => Number)
   @IsNumber()
   @IsNotEmpty()
-  quantidadeConvertida: number;
+  quantidadePadrao: number;
 }
 
 export class InserirItemConferidoVolumeParams extends VerificarItemConferidoVolumeParams {
@@ -159,7 +190,7 @@ export class InserirItemConferidoVolumeParams extends VerificarItemConferidoVolu
   @Type(() => Number)
   @IsNumber()
   @IsNotEmpty()
-  quantidadeConvertida: number;
+  quantidadePadrao: number;
 
   @ApiProperty({ example: 'UN' })
   @IsString()

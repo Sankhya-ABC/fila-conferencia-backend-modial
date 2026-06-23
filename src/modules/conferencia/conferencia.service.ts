@@ -1,11 +1,14 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
+import { GatewayClient } from 'src/http-client/gateway/gateway.client';
 import { ConferenciaHelper } from './conferencia.helper';
 import { FilaConferenciaFilter, IniciarConferenciaBody } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import { SessaoService } from '../sessao/sessao.service';
 import { PrismaService } from 'prisma/prisma.service';
+import { TenantService } from 'src/core/tenant/tenant.service';
+import { tenantStorage } from 'src/core/tenant/tenant.context';
 
 async function comRetry<T>(fn: () => Promise<T>, tentativas = 3, delayMs = 2000): Promise<T> {
   let ultimo: any;
@@ -22,13 +25,29 @@ async function comRetry<T>(fn: () => Promise<T>, tentativas = 3, delayMs = 2000)
 
 @Injectable()
 export class ConferenciaService {
+  private readonly logger = new Logger(ConferenciaService.name);
+
   constructor(
     private readonly loadRecordsClient: SankhyaLoadRecordsClient,
     private readonly conferenciaHelper: ConferenciaHelper,
     private readonly datasetSP: SankhyaDatasetSPClient,
+    private readonly gateway: GatewayClient,
     private readonly sessaoService: SessaoService,
     private readonly prisma: PrismaService,
+    private readonly tenantService: TenantService,
   ) {}
+
+  private async chamarConferenciaSP(serviceName: string, params: Record<string, any>): Promise<void> {
+    const path = `/mgecom/service.sbr?serviceName=${serviceName}&outputType=json`;
+    const res = await this.gateway.client.post(path, {
+      serviceName,
+      requestBody: { params },
+    });
+    if (res.data?.status !== '1') {
+      const msg = res.data?.statusMessage ?? `Falha em ${serviceName}`;
+      throw new BadRequestException(msg);
+    }
+  }
 
   // ─── Cache stale-while-revalidate ─────────────────────────────────────────
   private readonly filaCache = new Map<string, {
@@ -38,11 +57,12 @@ export class ConferenciaService {
   }>();
 
   private _filaKey(q: FilaConferenciaFilter): string {
+    const slug = tenantStorage.getStore() ?? '_';
     const clean: Record<string, any> = {};
     for (const [k, v] of Object.entries(q)) {
       if (v !== undefined && v !== null && v !== '') clean[k] = v;
     }
-    return JSON.stringify(clean, Object.keys(clean).sort());
+    return `${slug}:${JSON.stringify(clean, Object.keys(clean).sort())}`;
   }
 
   // ─── Fila (LoadRecords + status do banco local) ────────────────────────────
@@ -160,12 +180,14 @@ export class ConferenciaService {
       parameters.push({ value: queryParams.dataFim, type: 'D' });
     }
 
+    const queryExpression = expressions.join(' AND ');
+
     const [raw, activeNums] = await Promise.all([
       this.loadRecordsClient.loadRecords({
         rootEntity: 'CabecalhoNota',
         fieldset: 'NUNOTA,NUMNOTA,NUCONFATUAL,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,AD_NUMTALAO,AD_TIPOENTREGA,CODVEND',
         criteria: {
-          expression: expressions.join(' AND '),
+          expression: queryExpression,
           parameters: parameters.length ? parameters : undefined,
         },
         joins: [
@@ -175,6 +197,13 @@ export class ConferenciaService {
         ],
         offsetPage: page,
         limit: perPage,
+      }).then((r) => {
+        const rows = this.loadRecordsClient.parseEntities(r);
+        this.logger.log(`[Fila] Sankhya retornou ${rows.length} notas`);
+        return r;
+      }).catch((err) => {
+        this.logger.error('[Fila] ERRO Sankhya loadRecords', err?.message);
+        throw err;
       }),
       this.sessaoService.listarNumerosUnicosAtivos(),
     ]);
@@ -434,19 +463,26 @@ export class ConferenciaService {
     const r = rows[0];
     const nucco = r['TipoOperacao_NUCCO'] ?? null;
 
-    let formacaoVolumes: string | null = null;
+    let formacaoVolumes: string | null  = null;
+    let obterQtdBalanca: string | null  = null;
+    let qtdAmaior: string | null        = 'C';
     if (nucco != null) {
       const ccoRaw = await this.loadRecordsClient.loadRecords({
         rootEntity: 'ConfiguracaoConferencia',
-        fieldset: 'FORMACAOVOLUMES',
+        fieldset: 'FORMACAOVOLUMES,OBTERQTDBALANCA,QTDAMAIOR',
         criteria: { expression: 'NUCCO = ?', parameters: [{ value: Number(nucco), type: 'I' }] },
         limit: 1,
       }).catch(() => null);
       if (ccoRaw) {
         const ccoRows = this.loadRecordsClient.parseEntities(ccoRaw);
-        formacaoVolumes = ccoRows[0]?.FORMACAOVOLUMES ?? null;
+        formacaoVolumes  = ccoRows[0]?.FORMACAOVOLUMES   ?? null;
+        obterQtdBalanca  = (ccoRows[0]?.OBTERQTDBALANCA  as string | null) ?? null;
+        qtdAmaior        = (ccoRows[0]?.QTDAMAIOR         as string | null) ?? 'C';
       }
     }
+
+    const slug = tenantStorage.getStore()!;
+    const temCubagem = await this.tenantService.hasModulo(slug, 'AD_CUBAGEM');
 
     const estaAtiva = sessaoAtiva?.status === 'A';
     return {
@@ -457,6 +493,9 @@ export class ConferenciaService {
       codigoTipoMovimento: r.TIPMOV,
       descricaoTipoOperacao: r['TipoOperacao_DESCROPER'] ?? null,
       formacaoVolumes,
+      obterQtdBalanca,
+      qtdAmaior,
+      temCubagem,
       idParceiro: Number(r.CODPARC),
       nomeParceiro: r['Parceiro_RAZAOSOCIAL'] ?? null,
       idVendedor: r.CODVEND ? Number(r.CODVEND) : null,
@@ -498,7 +537,7 @@ export class ConferenciaService {
 
     // Carregamento da sessão em background — não bloqueia a resposta
     this.conferenciaHelper.carregarSessao({ numeroUnico, numeroConferencia, idUsuario })
-      .catch((err) => console.error('[carregarSessao] falhou em background:', err?.message));
+      .catch((err) => this.logger.error('[carregarSessao] falhou em background', err?.message));
 
     return { numeroConferencia };
   }
@@ -529,8 +568,25 @@ export class ConferenciaService {
     });
   }
 
+  async excluirSessao({ numeroUnico }: NumeroUnicoFilter) {
+    const sessao = await this.sessaoService.buscarPorNota(numeroUnico);
+    if (!sessao) throw new BadRequestException('Sessão não encontrada para esta nota.');
+
+    // Marca TGFCON2 como desistida (não bloqueia — erro é silencioso)
+    this.datasetSP.save({
+      entityName: 'CabecalhoConferencia',
+      pk: { NUCONF: sessao.numeroConferencia },
+      fieldsAndValues: { STATUS: 'D' },
+    }).catch((e) => this.logger.warn(`[excluirSessao] TGFCON2 não atualizado: ${e?.message ?? e}`));
+
+    await this.sessaoService.excluirSessao(sessao.id);
+    this.filaCache.clear();
+  }
+
   async postFinalizarConferencia({ numeroConferencia }: NumeroConferenciaFilter) {
     this.filaCache.clear(); // nota finalizada — invalida cache da fila
+    const slug = tenantStorage.getStore()!;
+    const temAdCubagem = await this.tenantService.hasModulo(slug, 'AD_CUBAGEM');
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
 
@@ -551,24 +607,44 @@ export class ConferenciaService {
       erros.push(`${label}${detail}`);
     };
 
+    // Peso bruto total: soma do peso de todos os volumes conferidos
+    const pesoBrutoTotal = dados.volumes.reduce((s, v) => s + (v.peso ?? 0), 0);
+
+    // Soma pesos de itens pesáveis (AD_PESAVEL='S') já gravados no TGFITE
+    let pesavelBruto = 0;
+    let pesavelLiq = 0;
+    try {
+      const pesRaw = await this.loadRecordsClient.loadRecords({
+        rootEntity: 'ItemNota',
+        fieldset: 'PESOBRUTO,PESOLIQ',
+        criteria: { expression: 'NUNOTA = ?', parameters: [{ value: sessao.numeroUnico, type: 'I' }] },
+        joins: [{ path: 'Produto', fieldset: 'AD_PESAVEL' }],
+      });
+      for (const row of this.loadRecordsClient.parseEntities(pesRaw)) {
+        if (String(row['Produto_AD_PESAVEL'] ?? 'N') === 'S') {
+          pesavelBruto += Number(row['PESOBRUTO'] ?? 0);
+          pesavelLiq += Number(row['PESOLIQ'] ?? 0);
+        }
+      }
+    } catch {
+      // não bloqueia finalização
+    }
+
     // Recovery: garante que TGFCON2 existe antes de inserir TGFCOI2
     // Tenta INSERT; se falhar (já existe ou validação), tenta UPDATE para confirmar existência.
     // Se ambos falharem, lança erro — sem TGFCON2 o TGFCOI2 quebraria com FK violation.
+    const cabIni: Record<string, any> = { NUCONF: numeroConferencia, CODUSUCONF: sessao.idUsuario, DHINICONF: dh, NUNOTAORIG: sessao.numeroUnico, STATUS: 'A' };
+    if (temAdCubagem) cabIni['QTDVOL'] = 0;
     await this.datasetSP.save({
       entityName: 'CabecalhoConferencia',
-      fieldsAndValues: {
-        NUCONF: numeroConferencia,
-        CODUSUCONF: sessao.idUsuario,
-        DHINICONF: dh,
-        NUNOTAORIG: sessao.numeroUnico,
-        QTDVOL: 0,
-        STATUS: 'A',
-      },
+      fieldsAndValues: cabIni,
     }).catch(async () => {
+      const cabIniUpd: Record<string, any> = { STATUS: 'A' };
+      if (temAdCubagem) cabIniUpd['QTDVOL'] = 0;
       await this.datasetSP.save({
         entityName: 'CabecalhoConferencia',
         pk: { NUCONF: numeroConferencia },
-        fieldsAndValues: { STATUS: 'A', QTDVOL: 0 },
+        fieldsAndValues: cabIniUpd,
       }).catch((e) => {
         throw new BadRequestException(
           `Não foi possível garantir o cabeçalho da conferência (TGFCON2) no Sankhya. Detalhe: ${e?.message ?? e}`,
@@ -591,13 +667,9 @@ export class ConferenciaService {
     for (const item of dados.itens) {
       itemMap.set(`${item.idProduto}|${(item.controle || ' ').trim() || ' '}`, { fatorConv: item.fatorConv, divideMult: item.divideMult });
     }
-    const toQtdVolpad = (idProduto: number, controle: string, qtd: number): number => {
-      const item = itemMap.get(`${idProduto}|${(controle || ' ').trim() || ' '}`);
-      if (!item?.fatorConv || !item?.divideMult) return qtd;
-      if (item.divideMult === 'D') return qtd / item.fatorConv;
-      if (item.divideMult === 'M') return qtd * item.fatorConv;
-      return qtd;
-    };
+    // sessaoLeitura.qtd já está em unidade PADRÃO (salvo como quantidadePadrao na conferência).
+    // TGFITE.QTDNEG também é armazenado em padrão pelo Sankhya. Não há conversão a fazer aqui.
+    const toQtdVolpad = (_idProduto: number, _controle: string, qtd: number): number => qtd;
 
     // Modo simplificado (S/T): sem TGFVCF/TGFIVC, AD_CUBAGEM sem SEQVOL com QTDVOL
     if (dados.qtdVol != null) {
@@ -615,9 +687,8 @@ export class ConferenciaService {
         const controleNorm = g.controle?.trim() || ' ';
         const qtdConv = toQtdVolpad(g.idProduto, g.controle, g.qtd);
         const payload = { NUCONF: numeroConferencia, SEQCONF: idx + 1, CODPROD: g.idProduto, CODVOL: g.codvol, CONTROLE: controleNorm, CODBARRA: g.codbarra, QTDCONF: qtdConv, QTDCONFVOLPAD: qtdConv, DHALTER: dh };
-        console.log('[TGFCOI2 simplificado payload]', JSON.stringify(payload));
         return this.datasetSP.save({ entityName: 'DetalhesConferencia', fieldsAndValues: payload }).catch(async (e) => {
-          console.error('[TGFCOI2 insert error]', e?.message);
+          this.logger.error('[TGFCOI2 insert error]', e?.message);
           await this.datasetSP.save({ entityName: 'DetalhesConferencia', pk: { NUCONF: numeroConferencia, SEQCONF: idx + 1 }, fieldsAndValues: { QTDCONF: qtdConv, QTDCONFVOLPAD: qtdConv, DHALTER: dh } })
             .catch((e2) => pushErro(`TGFCOI2 PROD=${g.idProduto}`, e ?? e2));
         });
@@ -644,7 +715,7 @@ export class ConferenciaService {
         : gruposDim.length > 0
           ? gruposDim.reduce((s, g) => s + g.qtd, 0)
           : dados.qtdVol;
-      const cubSimp: Promise<any>[] = cubPreSalvo
+      const cubSimp: Promise<any>[] = !temAdCubagem || cubPreSalvo
         ? []
         : gruposDim.length > 0
           ? gruposDim.map((g) =>
@@ -678,15 +749,35 @@ export class ConferenciaService {
         throw new BadRequestException(`Finalização concluída com erros nos seguintes registros: ${erros.join(', ')}. Os dados locais foram preservados para nova tentativa.`);
       }
 
-      // STATUS='F' obrigatório — retry 3x antes de falhar
+      // Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF
+      await this.chamarConferenciaSP('ConferenciaSP.cortar', {
+        nuNota: sessao.numeroUnico,
+        peso: pesoBrutoTotal,
+        qtdVol: totalVol,
+      });
+      await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
+        nuConf: String(numeroConferencia),
+        peso: pesoBrutoTotal,
+        qtdVol: totalVol,
+      }).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
+
+      // STATUS='F' — garante o fechamento local mesmo se finalizarConferencia não o fizer
+      const finSimp: Record<string, any> = { STATUS: 'F', DHFINCONF: dh };
+      if (temAdCubagem) finSimp['QTDVOL'] = totalVol;
       await comRetry(() =>
-        this.datasetSP.save({ entityName: 'CabecalhoConferencia', pk: { NUCONF: numeroConferencia }, fieldsAndValues: { STATUS: 'F', DHFINCONF: dh, QTDVOL: totalVol } })
+        this.datasetSP.save({ entityName: 'CabecalhoConferencia', pk: { NUCONF: numeroConferencia }, fieldsAndValues: finSimp })
       );
-      this.datasetSP.save({ entityName: 'CabecalhoNota', pk: { NUNOTA: dados.numeroUnico }, fieldsAndValues: { QTDVOL: totalVol } })
-        .catch(() => console.warn('[TGFCAB QTDVOL] falhou (non-blocking)'));
+      const tgfcabSimp: Record<string, any> = {};
+      if (temAdCubagem) tgfcabSimp['QTDVOL'] = totalVol;
+      if (pesoBrutoTotal > 0) tgfcabSimp['PESOBRUTOMANUAL'] = pesoBrutoTotal;
+      if (pesavelBruto > 0) { tgfcabSimp['PESOBRUTO'] = pesavelBruto; tgfcabSimp['PESOLIQ'] = pesavelLiq; }
+      if (Object.keys(tgfcabSimp).length > 0) {
+        this.datasetSP.save({ entityName: 'CabecalhoNota', pk: { NUNOTA: dados.numeroUnico }, fieldsAndValues: tgfcabSimp })
+          .catch(() => this.logger.warn('[TGFCAB] falhou (non-blocking)'));
+      }
 
       await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario)
-        .catch(() => console.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
+        .catch(() => this.logger.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
 
       await this.sessaoService.marcarFinalizada(sessao.id);
       return { qtdVol: totalVol, numeroConferencia };
@@ -790,12 +881,11 @@ export class ConferenciaService {
         QTDCONFVOLPAD: toQtdVolpad(g.idProduto, g.controle, g.qtd),
         DHALTER: dh,
       };
-      console.log('[TGFCOI2 payload]', JSON.stringify(payload));
       return this.datasetSP.save({
         entityName: 'DetalhesConferencia',
         fieldsAndValues: payload,
       }).catch(async (e) => {
-        console.error('[TGFCOI2 insert error]', e?.message);
+        this.logger.error('[TGFCOI2 insert error]', e?.message);
         // Retentativa: tenta update se já existir (PK: NUCONF + SEQCONF)
         await this.datasetSP.save({
           entityName: 'DetalhesConferencia',
@@ -805,7 +895,7 @@ export class ConferenciaService {
       });
     });
 
-    const cubPromises = volumesComDim.map((vol) =>
+    const cubPromises = temAdCubagem ? volumesComDim.map((vol) =>
       this.datasetSP.save({
         entityName: 'AD_CUBAGEM',
         fieldsAndValues: {
@@ -823,24 +913,9 @@ export class ConferenciaService {
           fieldsAndValues: { ALTURA: vol.altura, LARGURA: vol.largura, COMPRIMENTO: vol.comprimento, PESO: vol.peso },
         }).catch((e2) => pushErro(`Cubagem SEQVOL=${vol.seqVol}`, e2 ?? e));
       }),
-    );
+    ) : [];
 
     await Promise.all([...ivcPromises, ...coiPromises, ...cubPromises]);
-
-    // 3. Finalizar TGFCON2 — STATUS='F' obrigatório, retry 3x
-    const qtdVol = dados.volumes.length;
-    await comRetry(() =>
-      this.datasetSP.save({
-        entityName: 'CabecalhoConferencia',
-        pk: { NUCONF: numeroConferencia },
-        fieldsAndValues: { STATUS: 'F', DHFINCONF: dh, QTDVOL: qtdVol },
-      })
-    );
-    this.datasetSP.save({
-      entityName: 'CabecalhoNota',
-      pk: { NUNOTA: dados.numeroUnico },
-      fieldsAndValues: { QTDVOL: qtdVol },
-    }).catch(() => console.warn('[TGFCAB QTDVOL] falhou (non-blocking)'));
 
     if (erros.length) {
       throw new BadRequestException(
@@ -848,8 +923,43 @@ export class ConferenciaService {
       );
     }
 
+    // 3. Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF
+    const qtdVol = dados.volumes.length;
+    await this.chamarConferenciaSP('ConferenciaSP.cortar', {
+      nuNota: sessao.numeroUnico,
+      peso: pesoBrutoTotal,
+      qtdVol,
+    });
+    await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
+      nuConf: String(numeroConferencia),
+      peso: pesoBrutoTotal,
+      qtdVol,
+    }).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
+
+    // STATUS='F' — garante o fechamento local mesmo se finalizarConferencia não o fizer
+    const finDet: Record<string, any> = { STATUS: 'F', DHFINCONF: dh };
+    if (temAdCubagem) finDet['QTDVOL'] = qtdVol;
+    await comRetry(() =>
+      this.datasetSP.save({
+        entityName: 'CabecalhoConferencia',
+        pk: { NUCONF: numeroConferencia },
+        fieldsAndValues: finDet,
+      })
+    );
+    const tgfcabDet: Record<string, any> = {};
+    if (temAdCubagem) tgfcabDet['QTDVOL'] = qtdVol;
+    if (pesoBrutoTotal > 0) tgfcabDet['PESOBRUTOMANUAL'] = pesoBrutoTotal;
+    if (pesavelBruto > 0) { tgfcabDet['PESOBRUTO'] = pesavelBruto; tgfcabDet['PESOLIQ'] = pesavelLiq; }
+    if (Object.keys(tgfcabDet).length > 0) {
+      this.datasetSP.save({
+        entityName: 'CabecalhoNota',
+        pk: { NUNOTA: dados.numeroUnico },
+        fieldsAndValues: tgfcabDet,
+      }).catch(() => this.logger.warn('[TGFCAB] falhou (non-blocking)'));
+    }
+
     await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario)
-      .catch(() => console.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
+      .catch(() => this.logger.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
 
     await this.sessaoService.marcarFinalizada(sessao.id);
 

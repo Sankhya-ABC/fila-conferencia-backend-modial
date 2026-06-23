@@ -21,7 +21,13 @@ export class SessaoHttpController {
   }
 
   @Post(':numeroUnico/abrir')
-  async abrir(@Param('numeroUnico', ParseIntPipe) numeroUnico: number) {
+  async abrir(
+    @Param('numeroUnico', ParseIntPipe) numeroUnico: number,
+    @Req() req: any,
+    @Body() body: { token?: string },
+  ) {
+    const idUsuario = await this.resolveIdUsuario(req, body?.token);
+    if (idUsuario == null) return;
     return this.service.registrarAbertura(numeroUnico);
   }
 
