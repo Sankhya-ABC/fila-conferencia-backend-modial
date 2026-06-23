@@ -160,7 +160,7 @@ export class ConferenciaHelper {
       rootEntity: 'ItemNota',
       fieldset: 'SEQUENCIA,CODPROD,CODVOL,CONTROLE,QTDNEG,QTDENTREGUE,QTDCONFERIDA',
       criteria: { expression: 'NUNOTA = ?', parameters: [{ value: numeroUnico, type: 'I' }] },
-      joins: [{ path: 'Produto', fieldset: 'DESCRPROD,COMPLDESC,MARCA,REFERENCIA,DECQTD,TIPCONTEST,PESOBRUTO,EXCLUIRCONF,LISCONTEST,AD_PESAVEL,CODVOL' }],
+      joins: [{ path: 'Produto', fieldset: 'DESCRPROD,COMPLDESC,MARCA,REFERENCIA,DECQTD,TIPCONTEST,PESOBRUTO,EXCLUIRCONF,LISCONTEST,CODVOL' }],
     });
     const voaPromise = this.fetchAllPages({
       rootEntity: 'VolumeAlternativo',
@@ -278,7 +278,7 @@ export class ConferenciaHelper {
           FATOR_CONVERSAO: voa?.quantidade ?? null,
           CODVOL_PADRAO: item['Produto_CODVOL'] ? String(item['Produto_CODVOL']).trim() : null,
           UTILICONFPESO: volConfPesoMap.get(String(item['Produto_CODVOL'] ?? item.CODVOL ?? '').trim()) ?? false,
-          PESAVEL: String(item['Produto_AD_PESAVEL'] ?? 'N') === 'S',
+          PESAVEL: false,
           IMAGEM: null as string | null,
         };
       });
