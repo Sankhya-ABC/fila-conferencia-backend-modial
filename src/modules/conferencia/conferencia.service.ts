@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
 import { GatewayClient } from 'src/http-client/gateway/gateway.client';
@@ -9,6 +9,7 @@ import { SessaoService } from '../sessao/sessao.service';
 import { PrismaService } from 'prisma/prisma.service';
 import { TenantService } from 'src/core/tenant/tenant.service';
 import { tenantStorage } from 'src/core/tenant/tenant.context';
+import { InflightService } from 'src/core/inflight/inflight.service';
 
 async function comRetry<T>(fn: () => Promise<T>, tentativas = 3, delayMs = 2000): Promise<T> {
   let ultimo: any;
@@ -24,7 +25,7 @@ async function comRetry<T>(fn: () => Promise<T>, tentativas = 3, delayMs = 2000)
 }
 
 @Injectable()
-export class ConferenciaService {
+export class ConferenciaService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ConferenciaService.name);
 
   constructor(
@@ -35,7 +36,30 @@ export class ConferenciaService {
     private readonly sessaoService: SessaoService,
     private readonly prisma: PrismaService,
     private readonly tenantService: TenantService,
+    private readonly inflight: InflightService,
   ) {}
+
+  async onApplicationBootstrap() {
+    // Pre-aquece o cache da fila para todos os tenants ativos logo após o boot,
+    // eliminando a lentidão do primeiro acesso após reinicialização do container.
+    const DEFAULT_PARAMS: FilaConferenciaFilter = { page: '0', perPage: '50' };
+    try {
+      const tenants = await this.tenantService.listarAtivos();
+      for (const { slug } of tenants) {
+        tenantStorage.run(slug, () => {
+          const key = this._filaKey(DEFAULT_PARAMS);
+          this._fetchFila(DEFAULT_PARAMS)
+            .then((result) => {
+              this.filaCache.set(key, { result, cachedAt: Date.now(), refreshing: false });
+              this.logger.log(`[Fila] Cache pré-aquecido para tenant "${slug}"`);
+            })
+            .catch((err) => this.logger.warn(`[Fila] Falha ao pré-aquecer cache para "${slug}": ${err?.message}`));
+        });
+      }
+    } catch (err: any) {
+      this.logger.warn(`[Fila] Falha ao pré-aquecer cache: ${err?.message}`);
+    }
+  }
 
   private async chamarConferenciaSP(serviceName: string, params: Record<string, any>): Promise<void> {
     const path = `/mgecom/service.sbr?serviceName=${serviceName}&outputType=json`;
@@ -87,8 +111,8 @@ export class ConferenciaService {
       return hit.result;
     }
 
-    // Cache miss — busca normal, popula cache
-    const result = await this._fetchFila(queryParams);
+    // Cache miss — deduplica chamadas simultâneas e popula cache
+    const result = await this.inflight.dedupe(key, () => this._fetchFila(queryParams));
     this.filaCache.set(key, { result, cachedAt: Date.now(), refreshing: false });
 
     // Evita crescimento ilimitado: descarta a entrada mais antiga quando passa de 100
