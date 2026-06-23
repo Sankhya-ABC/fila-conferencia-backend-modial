@@ -99,10 +99,6 @@ export class TenantManagerService {
         .popularTipoOperacao()
         .catch((e) => ({ erro: e.message }));
 
-      resultado['usuarios'] = await this.sincronizacaoService
-        .popularUsuarios()
-        .catch((e) => ({ erro: e.message }));
-
       const prod = await this.sincronizacaoService
         .sincronizarProdutos()
         .catch((e) => ({ erro: e.message }));

@@ -28,12 +28,7 @@ async function main() {
         .popularTipoOperacao()
         .catch((e) => console.error('  ERRO:', e.message));
 
-      console.log('\n[2/3] Usuários...');
-      await sincronizacao
-        .popularUsuarios()
-        .catch((e) => console.error('  ERRO:', e.message));
-
-      console.log('\n[3/3] Produtos e Códigos...');
+      console.log('\n[2/3] Produtos e Códigos...');
       const res = await sincronizacao.sincronizarProdutos().catch((e) => {
         console.error('  ERRO:', e.message);
         return null;

@@ -8,7 +8,6 @@ import { UsuarioController } from './usuario.controller';
 import { UsuarioService } from './usuario.service';
 import { PrismaModule } from 'prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
-import { SincronizacaoModule } from '../sincronizacao/sincronizacao.module';
 
 @Module({
   controllers: [UsuarioController],
@@ -20,7 +19,6 @@ import { SincronizacaoModule } from '../sincronizacao/sincronizacao.module';
     AuthModule,
     SankhyaDatasetSPClientModule,
     PrismaModule,
-    SincronizacaoModule,
   ],
 })
 export class UsuarioModule {}

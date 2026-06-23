@@ -9,12 +9,6 @@ import { SincronizacaoService } from './sincronizacao.service';
 export class SincronizacaoController {
   constructor(private readonly service: SincronizacaoService) {}
 
-  @Get()
-  @ApiOperation({ summary: 'Sincronizar Usuários' })
-  getSincronizacaos() {
-    return this.service.popularUsuarios();
-  }
-
   @Get('tipo-operacao')
   @ApiOperation({ summary: 'Sincronizar Tipo Operação' })
   getSincronizacaoTipoOperacao() {

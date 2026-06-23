@@ -6,7 +6,6 @@ import {
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from 'prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
-import { SincronizacaoService } from '../sincronizacao/sincronizacao.service';
 import { TenantService } from 'src/core/tenant/tenant.service';
 import { tenantStorage } from 'src/core/tenant/tenant.context';
 import { CriarUsuarioDto, AtualizarUsuarioDto } from './dto/usuario-crud.dto';
@@ -16,7 +15,6 @@ export class UsuarioService {
   constructor(
     private prisma: PrismaService,
     private authService: AuthService,
-    private sincronizacaoService: SincronizacaoService,
     private tenantService: TenantService,
   ) {}
 
@@ -82,8 +80,6 @@ export class UsuarioService {
   }
 
   async redefinirAtivarLote(emails: string[]) {
-    await this.sincronizacaoService.popularUsuarios();
-
     const tenant = tenantStorage.getStore()!;
     const existentes: string[] = [];
     const naoExistentes: string[] = [];

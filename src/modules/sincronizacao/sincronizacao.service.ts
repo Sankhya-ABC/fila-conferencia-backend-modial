@@ -1,6 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { Perfil } from '@prisma/client';
 import { PrismaService } from 'prisma/prisma.service';
 import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { SankhyaDBExplorerSPClient } from 'src/http-client/db-explorer-sp/db-explorer-sp.client';
@@ -73,70 +72,7 @@ export class SincronizacaoService {
     }
   }
 
-  @Cron('*/10 * * * *')
-  async popularUsuariosCron() {
-    await this.runForAllTenants(() => this.popularUsuarios());
-  }
-
-  async popularUsuarios() {
-    try {
-      this.logger.log('INÍCIO: SINCRONIZAÇÃO - USUÁRIOS');
-
-      const usuarioRows: Record<string, any>[] = [];
-      let page = 0;
-      while (true) {
-        const raw = await this.loadRecords.loadRecords({
-          rootEntity: 'Usuario',
-          fieldset: 'CODUSU,NOMEUSU,EMAIL,FOTO,CODGRUPO',
-          criteria: { expression: 'EMAIL IS NOT NULL' },
-          joins: [{ path: 'GrupoUsuario', fieldset: 'NOMEGRUPO' }],
-          offsetPage: page,
-        });
-        usuarioRows.push(...this.loadRecords.parseEntities(raw));
-        if (!this.loadRecords.hasNextPage(raw)) break;
-        page++;
-      }
-
-      const usuarios = usuarioRows.map((data) => {
-        const nomeGrupo = (data['GrupoUsuario_NOMEGRUPO'] ?? '').trim();
-        return {
-          codigo: Number(data.CODUSU),
-          nome: String(data.NOMEUSU ?? '').trim(),
-          email: data.EMAIL,
-          foto: data.FOTO ?? null,
-          perfil:
-            nomeGrupo === 'ADMINISTRADOR' || nomeGrupo === 'DIRETORIA' || nomeGrupo === ''
-              ? Perfil.ADMINISTRADOR
-              : Perfil.SEPARADOR,
-        };
-      });
-
-      await Promise.all(
-        usuarios.map((usuario) =>
-          this.prisma.user.upsert({
-            where: { codigo: usuario.codigo },
-            update: {
-              nome: usuario.nome,
-              email: usuario.email,
-              foto: usuario.foto,
-              perfil: usuario.perfil,
-            },
-            create: {
-              ...usuario,
-              ativo: usuario.perfil === Perfil.ADMINISTRADOR,
-            },
-          }),
-        ),
-      );
-
-      this.logger.log('FIM: SINCRONIZAÇÃO - USUÁRIOS');
-    } catch (error) {
-      this.logger.error('Erro na sincronização de usuários', error instanceof Error ? error.message : String(error));
-      throw new BadRequestException('Erro ao sincronizar usuários');
-    }
-  }
-
-  private async getDialect(): Promise<string> {
+private async getDialect(): Promise<string> {
     const slug = tenantStorage.getStore();
     if (!slug) return 'SQLSERVER';
     const cfg = await this.tenantService.getConfig(slug);
