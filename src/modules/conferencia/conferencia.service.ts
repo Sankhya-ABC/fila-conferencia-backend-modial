@@ -46,14 +46,17 @@ export class ConferenciaService implements OnApplicationBootstrap {
     try {
       const tenants = await this.tenantService.listarAtivos();
       for (const { slug } of tenants) {
-        tenantStorage.run(slug, () => {
-          const key = this._filaKey(DEFAULT_PARAMS);
-          this._fetchFila(DEFAULT_PARAMS)
-            .then((result) => {
-              this.filaCache.set(key, { result, cachedAt: Date.now(), refreshing: false });
-              this.logger.log(`[Fila] Cache pré-aquecido para tenant "${slug}"`);
-            })
-            .catch((err) => this.logger.warn(`[Fila] Falha ao pré-aquecer cache para "${slug}": ${err?.message}`));
+        tenantStorage.run(slug, async () => {
+          try {
+            // Garante que o PrismaClient do tenant esteja conectado antes de _fetchFila
+            await this.tenantService.getClientForTenant(slug);
+            const key = this._filaKey(DEFAULT_PARAMS);
+            const result = await this._fetchFila(DEFAULT_PARAMS);
+            this.filaCache.set(key, { result, cachedAt: Date.now(), refreshing: false });
+            this.logger.log(`[Fila] Cache pré-aquecido para tenant "${slug}"`);
+          } catch (err: any) {
+            this.logger.warn(`[Fila] Falha ao pré-aquecer cache para "${slug}": ${err?.message}`);
+          }
         });
       }
     } catch (err: any) {
