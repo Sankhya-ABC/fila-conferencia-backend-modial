@@ -8,6 +8,7 @@ import { ArquivoService } from './arquivo.service';
 import { ArquivoHelper } from './arquivo.helper';
 import { SessaoModule } from '../sessao/sessao.module';
 import { PrismaModule } from 'prisma/prisma.module';
+import { TenantModule } from 'src/core/tenant/tenant.module';
 
 @Module({
   controllers: [ArquivoController],
@@ -19,6 +20,7 @@ import { PrismaModule } from 'prisma/prisma.module';
     SankhyaLoadRecordsClientModule,
     SessaoModule,
     PrismaModule,
+    TenantModule,
   ],
 })
 export class ArquivoModule {}

@@ -4,6 +4,8 @@ import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-reco
 import { NumeroConferenciaFilter } from '../dto/model';
 import { CacheItem } from './dto/arquivo.model';
 import { SessaoService } from '../sessao/sessao.service';
+import { TenantService } from 'src/core/tenant/tenant.service';
+import { tenantStorage } from 'src/core/tenant/tenant.context';
 
 @Injectable()
 export class ArquivoHelper {
@@ -14,6 +16,7 @@ export class ArquivoHelper {
     private readonly loadRecords: SankhyaLoadRecordsClient,
     private readonly sessaoService: SessaoService,
     private readonly prisma: PrismaService,
+    private readonly tenantService: TenantService,
   ) {}
 
   async isCubagemNaoDetalhada({ numeroConferencia }: NumeroConferenciaFilter) {
@@ -132,10 +135,12 @@ export class ArquivoHelper {
   // ─── Carrega info da nota via LoadRecords ──────────────────────────────────
 
   private async carregarInfoNota(numeroUnico: number) {
+    const slug = tenantStorage.getStore()!;
+    const temNumtalao = await this.tenantService.hasModulo(slug, 'AD_NUMTALAO');
     // Chamada 1: cabeçalho (sem join — evita falhas silenciosas de campos inválidos)
     const cabRaw = await this.loadRecords.loadRecords({
       rootEntity: 'CabecalhoNota',
-      fieldset: 'NUNOTA,AD_NUMTALAO,CODPARC',
+      fieldset: `NUNOTA${temNumtalao ? ',AD_NUMTALAO' : ''},CODPARC`,
       criteria: { expression: `NUNOTA = ${numeroUnico}` },
       limit: 1,
     });

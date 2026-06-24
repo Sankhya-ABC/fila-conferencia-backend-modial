@@ -39,6 +39,13 @@ setInterval(() => {
 const HTTP_PORT = 8765;
 
 http.createServer((req, res) => {
+  const origin = req.headers['origin'] || '(sem origin)';
+  console.log(`[HTTP]  ${req.method} ${req.url} — origin: ${origin}`);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
   if (req.method === 'GET' && (req.url === '/peso' || req.url === '/')) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ peso: pesoAtual, estavel, unidade: 'kg' }));

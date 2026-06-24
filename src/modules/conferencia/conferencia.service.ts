@@ -136,13 +136,19 @@ export class ConferenciaService implements OnApplicationBootstrap {
     const statusList = (queryParams.codigoStatus ?? '')
       .split(',').map((s) => s.trim()).filter(Boolean);
 
+    const slug = tenantStorage.getStore()!;
+    const [temNumtalao, temTipoentrega] = await Promise.all([
+      this.tenantService.hasModulo(slug, 'AD_NUMTALAO'),
+      this.tenantService.hasModulo(slug, 'AD_TIPOENTREGA'),
+    ]);
+
     // ── PERF: short-circuit F-only ────────────────────────────────────────────
     // A query principal tem NOT EXISTS(TGFCON2 STATUS IN ('F','D')), o que
     // garante que ela retorna ZERO linhas quando só se quer finalizados.
     // Pulamos ela por completo e buscamos direto no banco local + Sankhya.
     // Resultado idêntico ao path normal, sem o round-trip Sankhya desperdiçado.
     if (statusList.length > 0 && statusList.every((s) => s === 'F')) {
-      return this._getFilaFinalizadas(queryParams, page, perPage);
+      return this._getFilaFinalizadas(queryParams, page, perPage, temNumtalao, temTipoentrega);
     }
 
     const parameters: { value: any; type: 'S' | 'I' | 'D' | 'B' }[] = [];
@@ -194,7 +200,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         list.forEach((v) => parameters.push({ value: Number(v), type: 'I' }));
       }
     }
-    if (queryParams.numeroModial) {
+    if (queryParams.numeroModial && temNumtalao) {
       expressions.push('AD_NUMTALAO = ?');
       parameters.push({ value: queryParams.numeroModial, type: 'S' });
     }
@@ -209,10 +215,16 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
     const queryExpression = expressions.join(' AND ');
 
+    const camposAdFila = [
+      temNumtalao ? 'AD_NUMTALAO' : null,
+      temTipoentrega ? 'AD_TIPOENTREGA' : null,
+    ].filter(Boolean).join(',');
+    const fieldsetFila = `NUNOTA,NUMNOTA,NUCONFATUAL,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG${camposAdFila ? ',' + camposAdFila : ''},CODVEND`;
+
     const [raw, activeNums] = await Promise.all([
       this.loadRecordsClient.loadRecords({
         rootEntity: 'CabecalhoNota',
-        fieldset: 'NUNOTA,NUMNOTA,NUCONFATUAL,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,AD_NUMTALAO,AD_TIPOENTREGA,CODVEND',
+        fieldset: fieldsetFila,
         criteria: {
           expression: queryExpression,
           parameters: parameters.length ? parameters : undefined,
@@ -338,11 +350,12 @@ export class ConferenciaService implements OnApplicationBootstrap {
             if (queryParams.numeroNota)   { finExpressions.push('NUMNOTA = ?');    finParams.push({ value: Number(queryParams.numeroNota), type: 'I' }); }
             if (queryParams.idParceiro)   { finExpressions.push('CODPARC = ?');    finParams.push({ value: Number(queryParams.idParceiro), type: 'I' }); }
             if (queryParams.idEmpresa)    { finExpressions.push('CODEMP = ?');     finParams.push({ value: Number(queryParams.idEmpresa), type: 'I' }); }
-            if (queryParams.numeroModial) { finExpressions.push('AD_NUMTALAO = ?'); finParams.push({ value: queryParams.numeroModial, type: 'S' }); }
+            if (queryParams.numeroModial && temNumtalao) { finExpressions.push('AD_NUMTALAO = ?'); finParams.push({ value: queryParams.numeroModial, type: 'S' }); }
 
+            const camposAdFin = [temNumtalao ? 'AD_NUMTALAO' : null, temTipoentrega ? 'AD_TIPOENTREGA' : null].filter(Boolean).join(',');
             const rawFin = await this.loadRecordsClient.loadRecords({
               rootEntity: 'CabecalhoNota',
-              fieldset: 'NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,AD_NUMTALAO,AD_TIPOENTREGA,CODVEND',
+              fieldset: `NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG${camposAdFin ? ',' + camposAdFin : ''},CODVEND`,
               criteria: {
                 expression: finExpressions.join(' AND '),
                 parameters: finParams.length ? finParams : undefined,
@@ -391,6 +404,8 @@ export class ConferenciaService implements OnApplicationBootstrap {
     queryParams: FilaConferenciaFilter,
     page: number,
     perPage: number,
+    temNumtalao: boolean,
+    temTipoentrega: boolean,
   ) {
     try {
       const finalizadas = await this.sessaoService.listarSessionsFinalizadas();
@@ -414,11 +429,12 @@ export class ConferenciaService implements OnApplicationBootstrap {
       if (queryParams.numeroNota)   { finExpressions.push('NUMNOTA = ?');    finParams.push({ value: Number(queryParams.numeroNota), type: 'I' }); }
       if (queryParams.idParceiro)   { finExpressions.push('CODPARC = ?');    finParams.push({ value: Number(queryParams.idParceiro), type: 'I' }); }
       if (queryParams.idEmpresa)    { finExpressions.push('CODEMP = ?');     finParams.push({ value: Number(queryParams.idEmpresa), type: 'I' }); }
-      if (queryParams.numeroModial) { finExpressions.push('AD_NUMTALAO = ?'); finParams.push({ value: queryParams.numeroModial, type: 'S' }); }
+      if (queryParams.numeroModial && temNumtalao) { finExpressions.push('AD_NUMTALAO = ?'); finParams.push({ value: queryParams.numeroModial, type: 'S' }); }
 
+      const camposAd = [temNumtalao ? 'AD_NUMTALAO' : null, temTipoentrega ? 'AD_TIPOENTREGA' : null].filter(Boolean).join(',');
       const rawFin = await this.loadRecordsClient.loadRecords({
         rootEntity: 'CabecalhoNota',
-        fieldset: 'NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,AD_NUMTALAO,AD_TIPOENTREGA,CODVEND',
+        fieldset: `NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG${camposAd ? ',' + camposAd : ''},CODVEND`,
         criteria: {
           expression: finExpressions.join(' AND '),
           parameters: finParams.length ? finParams : undefined,
