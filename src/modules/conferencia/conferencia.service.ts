@@ -509,10 +509,11 @@ export class ConferenciaService implements OnApplicationBootstrap {
     let formacaoVolumes: string | null  = null;
     let obterQtdBalanca: string | null  = null;
     let qtdAmaior: string | null        = 'C';
+    let fataoConcluir: string | null    = 'N';
     if (nucco != null) {
       const ccoRaw = await this.loadRecordsClient.loadRecords({
         rootEntity: 'ConfiguracaoConferencia',
-        fieldset: 'FORMACAOVOLUMES,OBTERQTDBALANCA,QTDAMAIOR',
+        fieldset: 'FORMACAOVOLUMES,OBTERQTDBALANCA,QTDAMAIOR,FATAOCONCLUIR',
         criteria: { expression: 'NUCCO = ?', parameters: [{ value: Number(nucco), type: 'I' }] },
         limit: 1,
       }).catch(() => null);
@@ -521,6 +522,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         formacaoVolumes  = ccoRows[0]?.FORMACAOVOLUMES   ?? null;
         obterQtdBalanca  = (ccoRows[0]?.OBTERQTDBALANCA  as string | null) ?? null;
         qtdAmaior        = (ccoRows[0]?.QTDAMAIOR         as string | null) ?? 'C';
+        fataoConcluir    = (ccoRows[0]?.FATAOCONCLUIR     as string | null) ?? 'N';
       }
     }
 
@@ -538,6 +540,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       formacaoVolumes,
       obterQtdBalanca,
       qtdAmaior,
+      fataoConcluir,
       temCubagem,
       idParceiro: Number(r.CODPARC),
       nomeParceiro: r['Parceiro_RAZAOSOCIAL'] ?? null,
@@ -556,27 +559,22 @@ export class ConferenciaService implements OnApplicationBootstrap {
       return { numeroConferencia: sessaoExistente.numeroConferencia };
     }
 
-    // Validações + obtenção do próximo número em paralelo
-    const [, , numeroConferencia] = await Promise.all([
+    // Valida status da nota e ausência de conferência ativa no Sankhya
+    await Promise.all([
       this.conferenciaHelper.verificarStatus({ numeroUnico }),
       this.conferenciaHelper.verificarConferenciaAtiva({ numeroUnico }),
-      this.conferenciaHelper.obterNumeroConferencia(),
     ]);
 
-    // Reserva o número — único passo obrigatoriamente sequencial (evita race condition)
-    await this.conferenciaHelper.atualizarNumeroConferencia({ numeroConferencia });
-
-    // Cabeçalho no Sankhya: obrigatório antes de liberar a conferência.
-    // Retry 3x com 2s de intervalo — falha de rede transitória não deve bloquear.
-    // Se esgotar as tentativas, lança erro e o número reservado fica órfão
-    // (será reutilizado na próxima obterNumeroConferencia).
+    // Cria o cabeçalho via SP nativa — lida com tipos de coluna internamente (evita overflow smallint)
     await comRetry(() =>
-      this.conferenciaHelper.atualizarCabecalhoConferencia({ numeroUnico, numeroConferencia, idUsuario })
+      this.chamarConferenciaSP('ConferenciaSP.salvarCabecalhoConferencia', {
+        nuNota: numeroUnico,
+        iniciarRecontagem: false,
+      }),
     );
 
-    await comRetry(() =>
-      this.conferenciaHelper.atualizarCabecalhoNota({ numeroUnico, numeroConferencia })
-    );
+    // Obtém o NUCONF atribuído pela SP
+    const numeroConferencia = await this.conferenciaHelper.buscarNumeroConferenciaAtiva({ numeroUnico });
 
     // Carregamento da sessão em background — não bloqueia a resposta
     this.conferenciaHelper.carregarSessao({ numeroUnico, numeroConferencia, idUsuario })
@@ -1007,5 +1005,50 @@ export class ConferenciaService implements OnApplicationBootstrap {
     await this.sessaoService.marcarFinalizada(sessao.id);
 
     return { qtdVol, numeroConferencia };
+  }
+
+  async getTopsParaFaturamento(tipmov: string): Promise<{ codTipOper: number; descricao: string }[]> {
+    const raw = await this.loadRecordsClient.loadRecords({
+      rootEntity: 'TipoOperacao',
+      fieldset: 'CODTIPOPER,DESCROPER',
+      criteria: { expression: "TIPMOV = ? AND ATIVO = 'S'", parameters: [{ value: tipmov, type: 'S' }] },
+      limit: 100,
+    });
+    const rows = this.loadRecordsClient.parseEntities(raw);
+    return rows.map((r: any) => ({
+      codTipOper: Number(r.CODTIPOPER),
+      descricao: String(r.DESCROPER ?? ''),
+    }));
+  }
+
+  async faturarNota(nunota: number, codTipOper: number, serie: string): Promise<void> {
+    const path = `/mgecom/service.sbr?serviceName=SelecaoDocumentoSP.faturar&outputType=json`;
+    const hoje = new Date();
+    const dtFaturamento = `${String(hoje.getDate()).padStart(2, '0')}/${String(hoje.getMonth() + 1).padStart(2, '0')}/${hoje.getFullYear()}`;
+    const body = {
+      serviceName: 'SelecaoDocumentoSP.faturar',
+      requestBody: {
+        notas: {
+          codTipOper,
+          dtFaturamento,
+          tipoFaturamento: 'FaturamentoNormal',
+          dataValidada: true,
+          notasComMoeda: {},
+          nota: [{ $: nunota }],
+          serie: serie ?? '1',
+          faturarTodosItens: true,
+          umaNotaParaCada: 'false',
+          ehWizardFaturamento: true,
+          dtFixaVenc: '',
+          ehPedidoWeb: false,
+          nfeDevolucaoViaRecusa: false,
+        },
+      },
+    };
+    const res = await this.gateway.client.post(path, body);
+    if (res.data?.status !== '1') {
+      const msg = res.data?.statusMessage ?? 'Falha ao faturar nota';
+      throw new BadRequestException(msg);
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { Perfil } from '@prisma/client';
 
 export class CriarUsuarioDto {
@@ -13,4 +13,9 @@ export class AtualizarUsuarioDto {
   @IsOptional() @IsString() email?: string;
   @IsOptional() @IsEnum(Perfil) perfil?: Perfil;
   @IsOptional() @IsString() @MinLength(6) senha?: string;
+  @IsOptional() @IsBoolean() resetarSenha?: boolean;
+}
+
+export class AlterarSenhaDto {
+  @IsString() @MinLength(6) novaSenha: string;
 }

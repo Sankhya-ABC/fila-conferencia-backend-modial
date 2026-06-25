@@ -1,5 +1,6 @@
 import { ApiPropertyOptional, IntersectionType } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { IsInt, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
 import {
   IdUsuarioFilter,
   NumeroConferenciaFilter,
@@ -79,3 +80,9 @@ export class AtualizarCabecalhoNotaParams extends IntersectionType(
   NumeroUnicoFilter,
   NumeroConferenciaFilter,
 ) {}
+
+export class FaturarNotaDto {
+  @Type(() => Number) @IsInt() nunota: number;
+  @Type(() => Number) @IsInt() codTipOper: number;
+  @IsOptional() @IsString() serie?: string;
+}

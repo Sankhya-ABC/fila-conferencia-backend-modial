@@ -98,6 +98,7 @@ export class SessaoService {
     descricaoTipoOperacao?: string;
     formacaoVolumes?: string | null;
     buscarCodigoBarraPor?: string;
+    nomeParceiro?: string | null;
     itens: any[];
     codigos: any[];
   }) {
@@ -105,6 +106,7 @@ export class SessaoService {
       numeroUnico, numeroConferencia, idUsuario,
       codigoTipoMovimento, descricaoTipoOperacao, formacaoVolumes,
       buscarCodigoBarraPor = 'A',
+      nomeParceiro,
       itens, codigos,
     } = params;
 
@@ -122,7 +124,7 @@ export class SessaoService {
         data: {
           numeroUnico, numeroConferencia, idUsuario,
           codigoTipoMovimento, descricaoTipoOperacao, formacaoVolumes,
-          buscarCodigoBarraPor, status: 'A',
+          buscarCodigoBarraPor, nomeParceiro: nomeParceiro ?? null, status: 'A',
         },
         select: { id: true },
       });
@@ -475,7 +477,7 @@ export class SessaoService {
   async marcarFinalizada(sessaoId: string) {
     await this.prisma.sessaoConferencia.update({
       where: { id: sessaoId },
-      data: { status: 'F' },
+      data: { status: 'F', dtFechamento: new Date() },
     });
     this.sessaoCache.delete(sessaoId);
   }
@@ -529,10 +531,34 @@ export class SessaoService {
       where: { sessaoId, idProduto, controle },
       _sum: { qtd: true },
     });
-    await this.prisma.sessaoItem.updateMany({
+    const totalLido = Number(agg._sum.qtd ?? 0);
+
+    const items = await this.prisma.sessaoItem.findMany({
       where: { sessaoId, idProduto, controle },
-      data: { qtdConferidaLocal: agg._sum.qtd ?? 0 },
+      orderBy: { sequencia: 'asc' },
+      select: { id: true, qtdNeg: true },
     });
+
+    if (items.length <= 1) {
+      await this.prisma.sessaoItem.updateMany({
+        where: { sessaoId, idProduto, controle },
+        data: { qtdConferidaLocal: totalLido },
+      });
+      return;
+    }
+
+    // Mesmo produto + controle em linhas distintas: preenche sequencialmente
+    let restante = totalLido;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const isUltimo = i === items.length - 1;
+      const alloc = isUltimo ? restante : Math.min(restante, Number(item.qtdNeg));
+      await this.prisma.sessaoItem.update({
+        where: { id: item.id },
+        data: { qtdConferidaLocal: alloc },
+      });
+      restante = Math.max(0, restante - alloc);
+    }
   }
 
   // ─────────────────────────────────────────────

@@ -95,6 +95,7 @@ export class AuthService {
       idUsuario: user.codigo,
       perfil: user.perfil,
       snkModulos: (tenantCfg as any).snkModulos ?? '',
+      resetarSenha: (user as any).resetarSenha ?? false,
     };
   }
 

@@ -9,6 +9,11 @@ import { DashboardService } from './dashboard.service';
 export class DashboardController {
   constructor(private readonly service: DashboardService) {}
 
+  @Get('online-agora')
+  getOnlineAgora() {
+    return this.service.getAtividadeAgora();
+  }
+
   @Get('produtividade')
   getProdutividade(
     @Query('periodo') periodo = 'hoje',

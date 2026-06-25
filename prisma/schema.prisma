@@ -29,6 +29,7 @@ model User {
 
   senha        String?
   ativo        Boolean  @default(false)
+  resetarSenha Boolean  @default(false)
 
   resetToken      String?
   resetTokenExp   DateTime?
@@ -69,6 +70,7 @@ model SessaoConferencia {
   buscarCodigoBarraPor  String   @default("A")
   status                String   @default("A")
   criadoEm              DateTime @default(now())
+  nomeParceiro          String?
 
   qtdVol      Int?
   altura      Float?

@@ -43,6 +43,26 @@ export class ConferenciaHelper {
     }
   }
 
+  async buscarNumeroConferenciaAtiva({ numeroUnico }: NumeroUnicoFilter): Promise<number> {
+    const raw = await this.loadRecords.loadRecords({
+      rootEntity: 'CabecalhoConferencia',
+      fieldset: 'NUCONF',
+      criteria: {
+        expression: 'NUNOTAORIG = ? AND STATUS = ?',
+        parameters: [
+          { value: numeroUnico, type: 'I' },
+          { value: 'A', type: 'S' },
+        ],
+      },
+      limit: 1,
+    });
+    const results = this.loadRecords.parseEntities(raw);
+    if (!results.length) {
+      throw new BadRequestException('Conferência não encontrada após inicialização no Sankhya.');
+    }
+    return Number(results[0].NUCONF);
+  }
+
   async verificarConferenciaAtiva({ numeroUnico }: NumeroUnicoFilter) {
     const raw = await this.loadRecords.loadRecords({
       rootEntity: 'CabecalhoConferencia',
@@ -197,15 +217,19 @@ export class ConferenciaHelper {
     // Cabeçalho em paralelo com as demais (necessário para obter NUCCO → CCO)
     const cabRaw = await this.loadRecords.loadRecords({
       rootEntity: 'CabecalhoNota',
-      fieldset: 'TIPMOV',
+      fieldset: 'TIPMOV,CODPARC',
       criteria: { expression: 'NUNOTA = ?', parameters: [{ value: numeroUnico, type: 'I' }] },
-      joins: [{ path: 'TipoOperacao', fieldset: 'DESCROPER,NUCCO' }],
+      joins: [
+        { path: 'TipoOperacao', fieldset: 'DESCROPER,NUCCO' },
+        { path: 'Parceiro', fieldset: 'NOMEPARC' },
+      ],
       limit: 1,
     });
     const cabRows = this.loadRecords.parseEntities(cabRaw);
     const codigoTipoMovimento = cabRows[0]?.TIPMOV ?? null;
     const descricaoTipoOperacao = cabRows[0]?.['TipoOperacao_DESCROPER'] ?? null;
     const nucco = cabRows[0]?.['TipoOperacao_NUCCO'] ?? null;
+    const nomeParceiro: string | null = cabRows[0]?.['Parceiro_NOMEPARC'] ?? null;
 
     const ccoPromise = nucco != null
       ? this.loadRecords.loadRecords({
@@ -377,6 +401,7 @@ export class ConferenciaHelper {
     await this.sessaoService.criarSessao({
       numeroUnico, numeroConferencia, idUsuario,
       codigoTipoMovimento, descricaoTipoOperacao, formacaoVolumes, buscarCodigoBarraPor,
+      nomeParceiro,
       itens: itens.map(i => ({ ...i, UMAS: umaMap.get(Number(i.CODPROD)) ?? [] })),
       codigos,
     });

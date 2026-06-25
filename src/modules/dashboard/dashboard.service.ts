@@ -7,6 +7,38 @@ type Periodo = 'hoje' | 'semana' | 'mes' | 'custom';
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async getAtividadeAgora() {
+    const CINCO_MIN = new Date(Date.now() - 5 * 60 * 1000);
+
+    const recentHbs = await this.prisma.logHeartbeat.findMany({
+      where: { criadoEm: { gte: CINCO_MIN } },
+      orderBy: { criadoEm: 'desc' },
+    });
+
+    const hbByUser = new Map<number, (typeof recentHbs)[0]>();
+    for (const hb of recentHbs) {
+      if (!hbByUser.has(hb.idUsuario)) hbByUser.set(hb.idUsuario, hb);
+    }
+
+    const userIds = [...hbByUser.keys()];
+    const separadores = await this.prisma.user.findMany({
+      where: { codigo: { in: userIds }, perfil: 'SEPARADOR' },
+      select: { codigo: true, nome: true },
+    });
+    const separadorMap = new Map(separadores.map(u => [u.codigo, u.nome]));
+
+    const atividadeAgora = [...hbByUser.values()]
+      .filter(hb => separadorMap.has(hb.idUsuario))
+      .map(hb => ({
+        idUsuario: hb.idUsuario,
+        nomeUsuario: separadorMap.get(hb.idUsuario) ?? `Usuário ${hb.idUsuario}`,
+        numeroConferencia: hb.numeroConferencia ?? null,
+        minutosAtivo: Math.floor((Date.now() - hb.criadoEm.getTime()) / 60000),
+      }));
+
+    return { atividadeAgora, usuariosAtivos: atividadeAgora.length };
+  }
+
   private getPeriodStart(periodo: Periodo): Date {
     const now = new Date();
     if (periodo === 'hoje')   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -24,6 +56,7 @@ export class DashboardService {
     const { periodo, idUsuario, idUsuarioTimeline } = params;
 
     // Resolve intervalo de datas
+    const DATA_MINIMA = new Date('2026-07-26T00:00:00');
     let from: Date;
     let to: Date = new Date();
     if (periodo === 'custom' && params.dataInicio && params.dataFim) {
@@ -33,8 +66,7 @@ export class DashboardService {
     } else {
       from = this.getPeriodStart(periodo);
     }
-
-    const CINCO_MIN = new Date(Date.now() - 5 * 60 * 1000);
+    if (from < DATA_MINIMA) from = DATA_MINIMA;
 
     // ── Sessões do período ──────────────────────────────────────────────────
     const sessoes = await this.prisma.sessaoConferencia.findMany({
@@ -51,7 +83,7 @@ export class DashboardService {
         criadoEm: true,
         dtAbertura: true,
         dtFechamento: true,
-        itens: { select: { pesoBruto: true, qtdConferidaLocal: true } },
+        itens: { select: { qtdConferidaLocal: true } },
         _count: { select: { leituras: true, volumes: true } },
       },
     });
@@ -61,7 +93,10 @@ export class DashboardService {
     // ── KPIs globais ────────────────────────────────────────────────────────
     const totalConferencias = sessoesFin.length;
 
-    const comTempo = sessoesFin.filter(s => s.dtAbertura && s.dtFechamento);
+    const comTempo = sessoesFin.filter(s =>
+      s.dtAbertura && s.dtFechamento &&
+      s.dtFechamento.getTime() > s.dtAbertura.getTime(),
+    );
     const tempoMedioSegundos = comTempo.length
       ? Math.round(comTempo.reduce((acc, s) =>
           acc + (s.dtFechamento!.getTime() - s.dtAbertura!.getTime()) / 1000, 0) / comTempo.length)
@@ -70,47 +105,21 @@ export class DashboardService {
     const totalItensConf = sessoesFin.reduce(
       (acc, s) => acc + s.itens.reduce((a, i) => a + i.qtdConferidaLocal, 0), 0,
     );
-    const horasPeriodo = Math.max((to.getTime() - from.getTime()) / 3600000, 1);
-    const totalItensPorHora = Math.round(totalItensConf / horasPeriodo);
 
-    const pesoTotalKg = sessoesFin.reduce(
-      (acc, s) => acc + s.itens.reduce((a, i) => a + i.pesoBruto * i.qtdConferidaLocal, 0), 0,
-    );
+    const totalCubagens = sessoesFin.reduce((a, s) => a + s._count.volumes, 0);
 
-    // ── Usuários ativos (heartbeat < 5min) ──────────────────────────────────
-    const hbGroups = await this.prisma.logHeartbeat.groupBy({
-      by: ['idUsuario'],
-      where: { criadoEm: { gte: CINCO_MIN } },
-    });
-    const usuariosAtivos = hbGroups.length;
+    const horaAtual = new Date().getHours();
 
-    // ── Atividade agora ─────────────────────────────────────────────────────
-    const recentHbs = await this.prisma.logHeartbeat.findMany({
-      where: { criadoEm: { gte: CINCO_MIN } },
-      orderBy: { criadoEm: 'desc' },
-    });
-    const hbByUser = new Map<number, (typeof recentHbs)[0]>();
-    for (const hb of recentHbs) {
-      if (!hbByUser.has(hb.idUsuario)) hbByUser.set(hb.idUsuario, hb);
-    }
+    // ── Atividade agora (via método compartilhado) ──────────────────────────
+    const { atividadeAgora, usuariosAtivos } = await this.getAtividadeAgora();
 
-    // ── Mapa de nomes ───────────────────────────────────────────────────────
-    const allUserIds = [
-      ...new Set([...sessoes.map(s => s.idUsuario), ...hbByUser.keys()]),
-    ];
+    // ── Mapa de nomes (para ranking) ─────────────────────────────────────────
+    const allUserIds = [...new Set(sessoes.map(s => s.idUsuario))];
     const users = await this.prisma.user.findMany({
       where: { codigo: { in: allUserIds } },
-      select: { codigo: true, nome: true },
+      select: { codigo: true, nome: true, perfil: true },
     });
-    const userMap = new Map(users.map(u => [u.codigo, u.nome]));
-
-    const atividadeAgora = [...hbByUser.values()].map(hb => ({
-      idUsuario: hb.idUsuario,
-      nomeUsuario: userMap.get(hb.idUsuario) ?? `Usuário ${hb.idUsuario}`,
-      numeroConferencia: hb.numeroConferencia ?? 0,
-      nomeParceiro: '',
-      minutosAtivo: Math.floor((Date.now() - hb.criadoEm.getTime()) / 60000),
-    }));
+    const userMap = new Map(users.map(u => [u.codigo, u]));
 
     // ── Logins no período ───────────────────────────────────────────────────
     const loginGroups = await this.prisma.logLogin.groupBy({
@@ -125,7 +134,10 @@ export class DashboardService {
     const ranking = sessaoUserIds.map(uid => {
       const us = sessoes.filter(s => s.idUsuario === uid);
       const usFin = us.filter(s => s.status === 'F');
-      const usComTempo = usFin.filter(s => s.dtAbertura && s.dtFechamento);
+      const usComTempo = usFin.filter(s =>
+        s.dtAbertura && s.dtFechamento &&
+        s.dtFechamento.getTime() > s.dtAbertura.getTime(),
+      );
       const tempoMedio = usComTempo.length
         ? Math.round(usComTempo.reduce((a, s) =>
             a + (s.dtFechamento!.getTime() - s.dtAbertura!.getTime()) / 1000, 0) / usComTempo.length)
@@ -133,7 +145,7 @@ export class DashboardService {
 
       return {
         idUsuario: uid,
-        nomeUsuario: userMap.get(uid) ?? `Usuário ${uid}`,
+        nomeUsuario: userMap.get(uid)?.nome ?? `Usuário ${uid}`,
         totalConferencias: usFin.length,
         tempoMedioSegundos: tempoMedio,
         totalItens: Math.round(usFin.reduce(
@@ -147,7 +159,7 @@ export class DashboardService {
     // ── Picos por hora ──────────────────────────────────────────────────────
     const picosMap = new Map<number, number>();
     for (const s of sessoesFin) {
-      const hora = (s.dtAbertura ?? s.criadoEm).getHours();
+      const hora = s.criadoEm.getHours();
       picosMap.set(hora, (picosMap.get(hora) ?? 0) + 1);
     }
     const picos = Array.from({ length: 24 }, (_, h) => ({
@@ -159,7 +171,7 @@ export class DashboardService {
     // dia: 0=Seg … 4=Sex (sáb/dom ignorados)
     const heatmapMap = new Map<string, number>();
     for (const s of sessoesFin) {
-      const dt = s.dtAbertura ?? s.criadoEm;
+      const dt = s.criadoEm;
       const diaSemana = dt.getDay(); // 0=Dom, 1=Seg … 6=Sáb
       if (diaSemana === 0 || diaSemana === 6) continue;
       const dia  = diaSemana - 1; // 0=Seg … 4=Sex
@@ -184,6 +196,7 @@ export class DashboardService {
         select: {
           numeroConferencia: true,
           numeroUnico: true,
+          nomeParceiro: true,
           status: true,
           criadoEm: true,
           dtAbertura: true,
@@ -194,11 +207,11 @@ export class DashboardService {
 
       linhaDoTempo = tlSessoes.map(s => ({
         numeroConferencia: s.numeroConferencia,
-        nomeParceiro: `Pedido ${s.numeroUnico}`,
+        nomeParceiro: s.nomeParceiro ?? `Pedido ${s.numeroUnico}`,
         dtAbertura: s.dtAbertura ?? s.criadoEm,
         dtFechamento: s.dtFechamento ?? null,
         duracaoSegundos:
-          s.dtAbertura && s.dtFechamento
+          s.dtAbertura && s.dtFechamento && s.dtFechamento > s.dtAbertura
             ? Math.round((s.dtFechamento.getTime() - s.dtAbertura.getTime()) / 1000)
             : 0,
         totalItens: s._count.itens,
@@ -207,12 +220,15 @@ export class DashboardService {
       }));
     }
 
+    const producaoUltimaHora = picos.find(p => p.hora === horaAtual)?.total ?? 0;
+
     return {
       usuariosAtivos,
       totalConferencias,
+      totalCubagens,
       tempoMedioSegundos,
-      totalItensPorHora,
-      pesoTotalKg: Math.round(pesoTotalKg * 10) / 10,
+      totalItens: Math.round(totalItensConf * 10) / 10,
+      producaoUltimaHora,
       atividadeAgora,
       ranking,
       picos,

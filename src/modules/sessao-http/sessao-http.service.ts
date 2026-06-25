@@ -7,14 +7,14 @@ export class SessaoHttpService {
 
   async registrarAbertura(numeroUnico: number) {
     await this.prisma.sessaoConferencia.updateMany({
-      where: { numeroUnico, dtAbertura: null },
+      where: { numeroUnico, dtAbertura: null, status: { not: 'F' } },
       data: { dtAbertura: new Date() },
     });
   }
 
   async registrarFechamento(numeroUnico: number) {
     await this.prisma.sessaoConferencia.updateMany({
-      where: { numeroUnico, dtFechamento: null },
+      where: { numeroUnico, dtFechamento: null, status: { not: 'F' } },
       data: { dtFechamento: new Date() },
     });
   }

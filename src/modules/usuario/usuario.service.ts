@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -61,6 +62,7 @@ export class UsuarioService {
         foto: foto,
         perfil: usuario.perfil,
         ativo: usuario.ativo,
+        resetarSenha: usuario.resetarSenha,
         criadoEm: usuario.createdAt,
         atualizadoEm: usuario.updatedAt,
       };
@@ -158,6 +160,9 @@ export class UsuarioService {
     if (dto.nome !== undefined) data.nome = dto.nome;
     if (dto.perfil !== undefined) data.perfil = dto.perfil;
     if (dto.senha !== undefined) data.senha = await bcrypt.hash(dto.senha, 10);
+    if (dto.resetarSenha !== undefined) data.resetarSenha = dto.resetarSenha;
+
+    const tenant = tenantStorage.getStore()!;
 
     if (dto.email !== undefined && dto.email !== user.email) {
       const existente = await this.prisma.user.findUnique({
@@ -166,9 +171,11 @@ export class UsuarioService {
       if (existente) throw new BadRequestException('E-mail já em uso');
       data.email = dto.email;
 
-      const tenant = tenantStorage.getStore()!;
       await this.tenantService.removeTenantUser(user.email);
       await this.tenantService.addTenantUser(dto.email, tenant);
+    } else {
+      // Garante que o mapeamento existe para usuários criados antes desse controle
+      await this.tenantService.addTenantUser(user.email, tenant);
     }
 
     const updated = await this.prisma.user.update({
@@ -183,6 +190,30 @@ export class UsuarioService {
       perfil: updated.perfil,
       ativo: updated.ativo,
     };
+  }
+
+  async repararTenantUsers() {
+    const tenant = tenantStorage.getStore()!;
+    const usuarios = await this.prisma.user.findMany({ select: { email: true } });
+    for (const u of usuarios) {
+      await this.tenantService.addTenantUser(u.email, tenant);
+    }
+    return { reparados: usuarios.length };
+  }
+
+  async alterarSenha(codigo: number, novaSenha: string, requester: any) {
+    if (requester.idUsuario !== codigo && requester.perfil !== 'ADMINISTRADOR') {
+      throw new ForbiddenException('Sem permissão para alterar esta senha');
+    }
+    const user = await this.prisma.user.findUnique({ where: { codigo } });
+    if (!user) throw new NotFoundException('Usuário não encontrado');
+
+    const senhaHash = await bcrypt.hash(novaSenha, 10);
+    await this.prisma.user.update({
+      where: { codigo },
+      data: { senha: senhaHash, resetarSenha: false },
+    });
+    return { message: 'Senha alterada com sucesso' };
   }
 
   async deletarUsuario(codigo: number) {

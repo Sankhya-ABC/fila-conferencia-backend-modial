@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { FaturarNotaDto } from './dto/conferencia.dto';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { NoAuthApp } from 'src/core/guards/auth-app/no-auth-app.decorator';
 import { AuthUserGuard } from 'src/core/guards/auth-user/auth-user.guard';
@@ -52,5 +53,17 @@ export class ConferenciaController {
   @ApiOperation({ summary: 'Excluir sessão local e cancelar conferência no Sankhya' })
   excluirSessao(@Body() body: NumeroUnicoFilter) {
     return this.service.excluirSessao(body);
+  }
+
+  @Get('tops-faturamento')
+  @ApiOperation({ summary: 'Listar TOPs disponíveis para faturamento' })
+  getTopsParaFaturamento(@Query('tipmov') tipmov: string) {
+    return this.service.getTopsParaFaturamento(tipmov ?? 'V');
+  }
+
+  @Post('faturar')
+  @ApiOperation({ summary: 'Faturar nota via SelecaoDocumentoSP.faturar' })
+  faturarNota(@Body() dto: FaturarNotaDto) {
+    return this.service.faturarNota(dto.nunota, dto.codTipOper, dto.serie ?? '1');
   }
 }
