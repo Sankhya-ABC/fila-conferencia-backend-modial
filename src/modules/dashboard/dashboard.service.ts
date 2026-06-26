@@ -110,7 +110,7 @@ export class DashboardService {
 
     const totalCubagens = sessoesFin.reduce((a, s) => a + s._count.volumes, 0);
 
-    const horaAtual = new Date().getHours();
+    const horaAtual = ((new Date().getUTCHours() + 24 - 3) % 24);
 
     // ── Atividade agora (via método compartilhado) ──────────────────────────
     const { atividadeAgora, usuariosAtivos } = await this.getAtividadeAgora();
@@ -123,13 +123,18 @@ export class DashboardService {
     });
     const userMap = new Map(users.map(u => [u.codigo, u]));
 
-    // ── Logins no período ───────────────────────────────────────────────────
-    const loginGroups = await this.prisma.logLogin.groupBy({
-      by: ['idUsuario'],
+    // ── Logins no período (1 por dia por usuário) ────────────────────────────
+    const logins = await this.prisma.logLogin.findMany({
       where: { criadoEm: { gte: from, lte: to } },
-      _count: { id: true },
+      select: { idUsuario: true, criadoEm: true },
     });
-    const loginMap = new Map(loginGroups.map(l => [l.idUsuario, l._count.id]));
+    const loginDiasMap = new Map<number, Set<string>>();
+    for (const l of logins) {
+      const dia = l.criadoEm.toISOString().slice(0, 10);
+      if (!loginDiasMap.has(l.idUsuario)) loginDiasMap.set(l.idUsuario, new Set());
+      loginDiasMap.get(l.idUsuario)!.add(dia);
+    }
+    const loginMap = new Map([...loginDiasMap.entries()].map(([uid, dias]) => [uid, dias.size]));
 
     // ── Ranking ─────────────────────────────────────────────────────────────
     const sessaoUserIds = [...new Set(sessoes.map(s => s.idUsuario))].filter(
@@ -163,9 +168,17 @@ export class DashboardService {
     }).sort((a, b) => b.totalConferencias - a.totalConferencias);
 
     // ── Picos por hora ──────────────────────────────────────────────────────
+    const TZ_OFFSET_H = -3; // Brasília UTC-3
+    const localHour = (d: Date) => ((d.getUTCHours() + 24 + TZ_OFFSET_H) % 24);
+    const localDay  = (d: Date) => {
+      const h = d.getUTCHours() + TZ_OFFSET_H;
+      const offset = h < 0 ? -1 : h >= 24 ? 1 : 0;
+      return (d.getUTCDay() + 7 + offset) % 7;
+    };
+
     const picosMap = new Map<number, number>();
     for (const s of sessoesFin) {
-      const hora = s.criadoEm.getHours();
+      const hora = localHour(s.criadoEm);
       picosMap.set(hora, (picosMap.get(hora) ?? 0) + 1);
     }
     const picos = Array.from({ length: 24 }, (_, h) => ({
@@ -177,11 +190,10 @@ export class DashboardService {
     // dia: 0=Seg … 4=Sex (sáb/dom ignorados)
     const heatmapMap = new Map<string, number>();
     for (const s of sessoesFin) {
-      const dt = s.criadoEm;
-      const diaSemana = dt.getDay(); // 0=Dom, 1=Seg … 6=Sáb
+      const diaSemana = localDay(s.criadoEm); // 0=Dom, 1=Seg … 6=Sáb
       if (diaSemana === 0 || diaSemana === 6) continue;
       const dia  = diaSemana - 1; // 0=Seg … 4=Sex
-      const hora = dt.getHours();
+      const hora = localHour(s.criadoEm);
       const key  = `${dia}_${hora}`;
       heatmapMap.set(key, (heatmapMap.get(key) ?? 0) + 1);
     }
