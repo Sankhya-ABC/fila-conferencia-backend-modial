@@ -66,7 +66,7 @@ export class DashboardService {
     } else {
       from = this.getPeriodStart(periodo);
     }
-    if (from < DATA_MINIMA) from = DATA_MINIMA;
+    if (DATA_MINIMA <= new Date() && from < DATA_MINIMA) from = DATA_MINIMA;
 
     // ── Sessões do período ──────────────────────────────────────────────────
     const sessoes = await this.prisma.sessaoConferencia.findMany({
