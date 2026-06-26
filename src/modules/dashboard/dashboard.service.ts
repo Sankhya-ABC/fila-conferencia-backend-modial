@@ -93,13 +93,15 @@ export class DashboardService {
     // ── KPIs globais ────────────────────────────────────────────────────────
     const totalConferencias = sessoesFin.length;
 
-    const comTempo = sessoesFin.filter(s =>
-      s.dtAbertura && s.dtFechamento &&
-      s.dtFechamento.getTime() > s.dtAbertura.getTime(),
-    );
+    const comTempo = sessoesFin.filter(s => {
+      const inicio = s.dtAbertura ?? s.criadoEm;
+      return s.dtFechamento && s.dtFechamento.getTime() > inicio.getTime();
+    });
     const tempoMedioSegundos = comTempo.length
-      ? Math.round(comTempo.reduce((acc, s) =>
-          acc + (s.dtFechamento!.getTime() - s.dtAbertura!.getTime()) / 1000, 0) / comTempo.length)
+      ? Math.round(comTempo.reduce((acc, s) => {
+          const inicio = s.dtAbertura ?? s.criadoEm;
+          return acc + (s.dtFechamento!.getTime() - inicio.getTime()) / 1000;
+        }, 0) / comTempo.length)
       : 0;
 
     const totalItensConf = sessoesFin.reduce(
@@ -134,13 +136,15 @@ export class DashboardService {
     const ranking = sessaoUserIds.map(uid => {
       const us = sessoes.filter(s => s.idUsuario === uid);
       const usFin = us.filter(s => s.status === 'F');
-      const usComTempo = usFin.filter(s =>
-        s.dtAbertura && s.dtFechamento &&
-        s.dtFechamento.getTime() > s.dtAbertura.getTime(),
-      );
+      const usComTempo = usFin.filter(s => {
+        const inicio = s.dtAbertura ?? s.criadoEm;
+        return s.dtFechamento && s.dtFechamento.getTime() > inicio.getTime();
+      });
       const tempoMedio = usComTempo.length
-        ? Math.round(usComTempo.reduce((a, s) =>
-            a + (s.dtFechamento!.getTime() - s.dtAbertura!.getTime()) / 1000, 0) / usComTempo.length)
+        ? Math.round(usComTempo.reduce((a, s) => {
+            const inicio = s.dtAbertura ?? s.criadoEm;
+            return a + (s.dtFechamento!.getTime() - inicio.getTime()) / 1000;
+          }, 0) / usComTempo.length)
         : 0;
 
       return {
