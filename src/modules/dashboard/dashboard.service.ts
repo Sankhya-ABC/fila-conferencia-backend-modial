@@ -41,9 +41,12 @@ export class DashboardService {
 
   private getPeriodStart(periodo: Periodo): Date {
     const now = new Date();
+    const TZ = -3 * 3600000;
     if (periodo === 'hoje')   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    if (periodo === 'semana') return new Date(now.getTime() - 7  * 24 * 3600 * 1000);
-    return new Date(now.getTime() - 30 * 24 * 3600 * 1000);
+    if (periodo === 'semana') return new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+    // 'mes': início do mês corrente em Brasília (UTC-3)
+    const local = new Date(now.getTime() + TZ);
+    return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1) - TZ);
   }
 
   async getProdutividade(params: {
@@ -202,17 +205,41 @@ export class DashboardService {
       return { dia, hora, total };
     });
 
-    // ── Dias do mês (para view mensal/custom) ───────────────────────────────
-    const diasMesMap = new Map<number, number>();
+    // ── Dias do mês (calendário heatmap) ────────────────────────────────────
+    const localNow = new Date(Date.now() + TZ_OFFSET_H * 3600000);
+    const mesAno  = localNow.getUTCFullYear();
+    const mesNum  = localNow.getUTCMonth() + 1;
+    const diasNoMes = new Date(mesAno, mesNum, 0).getDate();
+    const mesReferencia = `${mesAno}-${String(mesNum).padStart(2, '0')}`;
+
+    const diasMesDetMap = new Map<string, {
+      total: number; cubagens: number; tempoSecs: number[]; operadores: Set<number>;
+    }>();
     for (const s of sessoesFin) {
-      const localDate = new Date(s.criadoEm.getTime() + TZ_OFFSET_H * 3600 * 1000);
-      const dia = localDate.getUTCDate();
-      diasMesMap.set(dia, (diasMesMap.get(dia) ?? 0) + 1);
+      const ld = new Date(s.criadoEm.getTime() + TZ_OFFSET_H * 3600000);
+      const dateStr = `${ld.getUTCFullYear()}-${String(ld.getUTCMonth()+1).padStart(2,'0')}-${String(ld.getUTCDate()).padStart(2,'0')}`;
+      if (!diasMesDetMap.has(dateStr)) diasMesDetMap.set(dateStr, { total: 0, cubagens: 0, tempoSecs: [], operadores: new Set() });
+      const e = diasMesDetMap.get(dateStr)!;
+      e.total++;
+      e.cubagens += s._count.volumes;
+      const ini = s.dtAbertura ?? s.criadoEm;
+      if (s.dtFechamento && s.dtFechamento.getTime() > ini.getTime())
+        e.tempoSecs.push((s.dtFechamento.getTime() - ini.getTime()) / 1000);
+      e.operadores.add(s.idUsuario);
     }
-    const diasMes = Array.from({ length: 31 }, (_, i) => ({
-      dia: i + 1,
-      total: diasMesMap.get(i + 1) ?? 0,
-    }));
+    const diasMes = Array.from({ length: diasNoMes }, (_, i) => {
+      const dia = i + 1;
+      const dateStr = `${mesAno}-${String(mesNum).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+      const e = diasMesDetMap.get(dateStr);
+      return {
+        date: dateStr,
+        dia,
+        total: e?.total ?? 0,
+        cubagens: e?.cubagens ?? 0,
+        tempoMedioSegundos: e?.tempoSecs.length ? Math.round(e.tempoSecs.reduce((a, b) => a + b, 0) / e.tempoSecs.length) : 0,
+        operadores: e?.operadores.size ?? 0,
+      };
+    });
 
     // ── Linha do tempo ──────────────────────────────────────────────────────
     let linhaDoTempo: any[] = [];
@@ -264,6 +291,7 @@ export class DashboardService {
       picos,
       heatmap,
       diasMes,
+      mesReferencia,
       linhaDoTempo,
     };
   }
