@@ -202,6 +202,18 @@ export class DashboardService {
       return { dia, hora, total };
     });
 
+    // ── Dias do mês (para view mensal/custom) ───────────────────────────────
+    const diasMesMap = new Map<number, number>();
+    for (const s of sessoesFin) {
+      const localDate = new Date(s.criadoEm.getTime() + TZ_OFFSET_H * 3600 * 1000);
+      const dia = localDate.getUTCDate();
+      diasMesMap.set(dia, (diasMesMap.get(dia) ?? 0) + 1);
+    }
+    const diasMes = Array.from({ length: 31 }, (_, i) => ({
+      dia: i + 1,
+      total: diasMesMap.get(i + 1) ?? 0,
+    }));
+
     // ── Linha do tempo ──────────────────────────────────────────────────────
     let linhaDoTempo: any[] = [];
     if (idUsuarioTimeline != null) {
@@ -251,6 +263,7 @@ export class DashboardService {
       ranking,
       picos,
       heatmap,
+      diasMes,
       linhaDoTempo,
     };
   }
