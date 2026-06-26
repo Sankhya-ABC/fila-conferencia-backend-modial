@@ -86,8 +86,9 @@ export class DashboardService {
         criadoEm: true,
         dtAbertura: true,
         dtFechamento: true,
+        qtdVol: true,
         itens: { select: { qtdConferidaLocal: true } },
-        _count: { select: { leituras: true, volumes: true } },
+        _count: { select: { leituras: true } },
       },
     });
 
@@ -111,7 +112,7 @@ export class DashboardService {
       (acc, s) => acc + s.itens.reduce((a, i) => a + i.qtdConferidaLocal, 0), 0,
     );
 
-    const totalCubagens = sessoesFin.reduce((a, s) => a + s._count.volumes, 0);
+    const totalCubagens = sessoesFin.reduce((a, s) => a + (s.qtdVol ?? 0), 0);
 
     const horaAtual = ((new Date().getUTCHours() + 24 - 3) % 24);
 
@@ -165,7 +166,7 @@ export class DashboardService {
         totalItens: Math.round(usFin.reduce(
           (a, s) => a + s.itens.reduce((b, i) => b + i.qtdConferidaLocal, 0), 0) * 10) / 10,
         totalBipagens: usFin.reduce((a, s) => a + s._count.leituras, 0),
-        totalCubagens: usFin.reduce((a, s) => a + s._count.volumes, 0),
+        totalCubagens: usFin.reduce((a, s) => a + (s.qtdVol ?? 0), 0),
         totalLogins: loginMap.get(uid) ?? 0,
       };
     }).sort((a, b) => b.totalConferencias - a.totalConferencias);
@@ -221,7 +222,7 @@ export class DashboardService {
       if (!diasMesDetMap.has(dateStr)) diasMesDetMap.set(dateStr, { total: 0, cubagens: 0, tempoSecs: [], operadores: new Set() });
       const e = diasMesDetMap.get(dateStr)!;
       e.total++;
-      e.cubagens += s._count.volumes;
+      e.cubagens += s.qtdVol ?? 0;
       const ini = s.dtAbertura ?? s.criadoEm;
       if (s.dtFechamento && s.dtFechamento.getTime() > ini.getTime())
         e.tempoSecs.push((s.dtFechamento.getTime() - ini.getTime()) / 1000);
@@ -258,7 +259,8 @@ export class DashboardService {
           criadoEm: true,
           dtAbertura: true,
           dtFechamento: true,
-          _count: { select: { itens: true, volumes: true } },
+          qtdVol: true,
+          _count: { select: { itens: true } },
         },
       });
 
@@ -272,7 +274,7 @@ export class DashboardService {
             ? Math.round((s.dtFechamento.getTime() - s.dtAbertura.getTime()) / 1000)
             : 0,
         totalItens: s._count.itens,
-        totalVolumes: s._count.volumes,
+        totalVolumes: s.qtdVol ?? 0,
         abandonada: s.status !== 'F',
       }));
     }
