@@ -586,11 +586,9 @@ export class ConferenciaService implements OnApplicationBootstrap {
   // ─── Finalizar (batch-write de tudo para o Sankhya) ──────────────────────
 
   private async atualizarObservacaoNota(numeroUnico: number, nomeUsuario: string): Promise<void> {
-    const novaLinha = `Pedido Separado por: ${nomeUsuario}`;
-
     const raw = await this.loadRecordsClient.loadRecords({
       rootEntity: 'CabecalhoNota',
-      fieldset: 'OBSERVACAO',
+      fieldset: 'OBSERVACAO,AD_NUMTALAO',
       criteria: {
         expression: 'NUNOTA = ?',
         parameters: [{ value: numeroUnico, type: 'I' }],
@@ -600,7 +598,13 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
     const rows = this.loadRecordsClient.parseEntities(raw);
     const obsAtual = (rows[0]?.OBSERVACAO ?? '').trim();
-    const novaObs = obsAtual ? `${obsAtual}\n${novaLinha}` : novaLinha;
+    const numModial = rows[0]?.AD_NUMTALAO ? String(rows[0].AD_NUMTALAO).trim() : null;
+
+    const linhas: string[] = [];
+    if (numModial) linhas.push(`Pedido Modial: #${numModial}`);
+    linhas.push(`Pedido Separado por: ${nomeUsuario}`);
+
+    const novaObs = obsAtual ? `${obsAtual}\n${linhas.join('\n')}` : linhas.join('\n');
 
     await this.datasetSP.save({
       entityName: 'CabecalhoNota',
