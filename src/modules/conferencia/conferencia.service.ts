@@ -613,6 +613,40 @@ export class ConferenciaService implements OnApplicationBootstrap {
     });
   }
 
+  private async gravarRelatorioCubagem(
+    numeroUnico: number,
+    grupos: Array<{ qtd: number; altura?: number | null; largura?: number | null; comprimento?: number | null; peso?: number | null }>,
+    totalVol: number,
+  ): Promise<void> {
+    if (!grupos.length) return;
+
+    const fmt = (v: number | null | undefined) =>
+      v != null ? v.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) : '?';
+    const fmtPeso = (v: number | null | undefined) =>
+      v != null ? v.toLocaleString('pt-BR', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : '?';
+
+    const linhas: string[] = [];
+    linhas.push('=== CUBAGEM DO PEDIDO ===');
+    linhas.push(`Volumes: ${totalVol}`);
+    linhas.push('');
+
+    for (const g of grupos) {
+      linhas.push(
+        `${g.qtd}x | A:${fmt(g.altura)} L:${fmt(g.largura)} C:${fmt(g.comprimento)} cm | ${fmtPeso(g.peso)} kg`,
+      );
+    }
+
+    const pesoTotal = grupos.reduce((acc, g) => acc + (g.peso ?? 0) * g.qtd, 0);
+    linhas.push('');
+    linhas.push(`Peso total: ${fmtPeso(pesoTotal)} kg`);
+
+    await this.datasetSP.save({
+      entityName: 'CabecalhoNota',
+      pk: { NUNOTA: numeroUnico },
+      fieldsAndValues: { AD_RELATORIOCUB: linhas.join('\n') },
+    });
+  }
+
   async excluirSessao({ numeroUnico }: NumeroUnicoFilter) {
     const sessao = await this.sessaoService.buscarPorNota(numeroUnico);
     if (!sessao) throw new BadRequestException('Sessão não encontrada para esta nota.');
@@ -824,6 +858,14 @@ export class ConferenciaService implements OnApplicationBootstrap {
       await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario)
         .catch(() => this.logger.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
 
+      if (temAdCubagem) {
+        const gruposRel = gruposDim.length > 0
+          ? gruposDim
+          : [{ qtd: dados.qtdVol ?? 1, altura: dados.altura, largura: dados.largura, comprimento: dados.comprimento, peso: dados.peso }];
+        await this.gravarRelatorioCubagem(dados.numeroUnico, gruposRel, totalVol)
+          .catch(() => this.logger.warn('[AD_RELATORIOCUB] falhou (non-blocking)'));
+      }
+
       await this.sessaoService.marcarFinalizada(sessao.id);
       return { qtdVol: totalVol, numeroConferencia };
     }
@@ -1005,6 +1047,18 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
     await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario)
       .catch(() => this.logger.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
+
+    if (temAdCubagem && volumesComDim.length > 0) {
+      const dimAgrupado = new Map<string, { qtd: number; altura?: number | null; largura?: number | null; comprimento?: number | null; peso?: number | null }>();
+      for (const v of volumesComDim) {
+        const key = `${v.altura}|${v.largura}|${v.comprimento}|${v.peso}`;
+        const ex = dimAgrupado.get(key);
+        if (ex) ex.qtd++;
+        else dimAgrupado.set(key, { qtd: 1, altura: v.altura, largura: v.largura, comprimento: v.comprimento, peso: v.peso });
+      }
+      await this.gravarRelatorioCubagem(dados.numeroUnico, [...dimAgrupado.values()], dados.volumes.length)
+        .catch(() => this.logger.warn('[AD_RELATORIOCUB] falhou (non-blocking)'));
+    }
 
     await this.sessaoService.marcarFinalizada(sessao.id);
 
