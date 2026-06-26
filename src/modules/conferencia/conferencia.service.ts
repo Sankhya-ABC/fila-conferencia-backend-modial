@@ -859,11 +859,13 @@ export class ConferenciaService implements OnApplicationBootstrap {
         .catch(() => this.logger.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
 
       if (temAdCubagem) {
-        const gruposRel = gruposDim.length > 0
+        const todos = gruposDim.length > 0
           ? gruposDim
           : [{ qtd: dados.qtdVol ?? 1, altura: dados.altura, largura: dados.largura, comprimento: dados.comprimento, peso: dados.peso }];
-        await this.gravarRelatorioCubagem(dados.numeroUnico, gruposRel, totalVol)
-          .catch(() => this.logger.warn('[AD_RELATORIOCUB] falhou (non-blocking)'));
+        const gruposRel = todos.filter(g => g.altura != null || g.largura != null || g.comprimento != null || g.peso != null);
+        if (gruposRel.length > 0)
+          await this.gravarRelatorioCubagem(dados.numeroUnico, gruposRel, totalVol)
+            .catch(() => this.logger.warn('[AD_RELATORIOCUB] falhou (non-blocking)'));
       }
 
       await this.sessaoService.marcarFinalizada(sessao.id);
