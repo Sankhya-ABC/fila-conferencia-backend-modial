@@ -133,7 +133,7 @@ export class DashboardService {
 
     // ── Ranking ─────────────────────────────────────────────────────────────
     const sessaoUserIds = [...new Set(sessoes.map(s => s.idUsuario))].filter(
-      uid => userMap.get(uid)?.perfil !== 'ADMIN',
+      uid => userMap.get(uid)?.perfil !== 'ADMINISTRADOR',
     );
     const ranking = sessaoUserIds.map(uid => {
       const us = sessoes.filter(s => s.idUsuario === uid);
