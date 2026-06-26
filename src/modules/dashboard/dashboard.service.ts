@@ -56,7 +56,7 @@ export class DashboardService {
     const { periodo, idUsuario, idUsuarioTimeline } = params;
 
     // Resolve intervalo de datas
-    const DATA_MINIMA = new Date('2026-07-26T00:00:00');
+    const DATA_MINIMA = new Date('2026-06-26T00:00:00');
     let from: Date;
     let to: Date = new Date();
     if (periodo === 'custom' && params.dataInicio && params.dataFim) {
@@ -132,7 +132,9 @@ export class DashboardService {
     const loginMap = new Map(loginGroups.map(l => [l.idUsuario, l._count.id]));
 
     // ── Ranking ─────────────────────────────────────────────────────────────
-    const sessaoUserIds = [...new Set(sessoes.map(s => s.idUsuario))];
+    const sessaoUserIds = [...new Set(sessoes.map(s => s.idUsuario))].filter(
+      uid => userMap.get(uid)?.perfil !== 'ADMIN',
+    );
     const ranking = sessaoUserIds.map(uid => {
       const us = sessoes.filter(s => s.idUsuario === uid);
       const usFin = us.filter(s => s.status === 'F');
