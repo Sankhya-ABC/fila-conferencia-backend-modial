@@ -302,7 +302,6 @@ export class ConferenciaHelper {
           FATOR_CONVERSAO: voa?.quantidade ?? null,
           CODVOL_PADRAO: item['Produto_CODVOL'] ? String(item['Produto_CODVOL']).trim() : null,
           UTILICONFPESO: volConfPesoMap.get(String(item['Produto_CODVOL'] ?? item.CODVOL ?? '').trim()) ?? false,
-          PESAVEL: false,
           IMAGEM: null as string | null,
         };
       });
@@ -467,15 +466,6 @@ export class ConferenciaHelper {
     }
 
     return codigos;
-  }
-
-  async gravarPesoItem(params: { nunota: number; sequencia: number; pesobruto: number; pesoliq: number }) {
-    const { nunota, sequencia, pesobruto, pesoliq } = params;
-    await this.datasetSP.save({
-      entityName: 'ItemNota',
-      pk: { NUNOTA: nunota, SEQUENCIA: sequencia },
-      fieldsAndValues: { PESOBRUTO: pesobruto, PESOLIQ: pesoliq },
-    });
   }
 
   private async fetchAllPages(params: LoadRecordsParams): Promise<Record<string, any>[]> {

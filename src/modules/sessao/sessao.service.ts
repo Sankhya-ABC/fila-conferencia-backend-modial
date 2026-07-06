@@ -26,7 +26,6 @@ type ItemCached = {
   fatorConv: number | null;
   lisControles: string | null;
   usaConfPeso: boolean;
-  pesavel: boolean;
   umas: UmaCached[];
 };
 
@@ -166,7 +165,6 @@ export class SessaoService {
             fatorConv: item.FATOR_CONVERSAO != null ? Number(item.FATOR_CONVERSAO) : null,
             lisControles: item.LISCONTEST?.trim() || null,
             usaConfPeso: item.UTILICONFPESO === true || item.UTILICONFPESO === 'S',
-            pesavel: item.PESAVEL === true || item.PESAVEL === 'S',
             imagem: item.IMAGEM
               ? (item.IMAGEM.startsWith('data:') || item.IMAGEM.startsWith('http')
                   ? item.IMAGEM
@@ -216,7 +214,6 @@ export class SessaoService {
         fatorConv: item.FATOR_CONVERSAO != null ? Number(item.FATOR_CONVERSAO) : null,
         lisControles: item.LISCONTEST?.trim() || null,
         usaConfPeso: item.UTILICONFPESO === true || item.UTILICONFPESO === 'S',
-        pesavel: item.PESAVEL === true || item.PESAVEL === 'S',
         umas: (item.UMAS ?? []).map((u: any): UmaCached => ({
           codUma: u.codUma, descricao: u.descricao, peso: u.peso ?? null,
           codVol: u.codVol ?? null, codBarra: u.codBarra ?? null, padrao: u.padrao,
@@ -254,7 +251,7 @@ export class SessaoService {
               idProduto: true, nomeProduto: true, complemento: true, referencia: true,
               unidade: true, controle: true, tipControle: true, decQtd: true,
               pesoBruto: true, divideMult: true, fatorConv: true, lisControles: true,
-              usaConfPeso: true, pesavel: true,
+              usaConfPeso: true,
             },
           },
         },
@@ -273,7 +270,7 @@ export class SessaoService {
       cached = {
         buscarCodigoBarraPor: sessao.buscarCodigoBarraPor,
         codigosCarregados: sessao.codigos.some((c) => c.origem === 'LOADED'),
-        itens: sessao.itens.map(i => ({ ...i, pesavel: i.pesavel ?? false, umas: umasByProd.get(i.idProduto) ?? [] })),
+        itens: sessao.itens.map(i => ({ ...i, umas: umasByProd.get(i.idProduto) ?? [] })),
         codigos: sessao.codigos,
       };
       this.sessaoCache.set(sessaoId, cached);
@@ -302,7 +299,6 @@ export class SessaoService {
       divideMult,
       lisControles: item.lisControles,
       usaConfPeso: item.usaConfPeso ?? false,
-      pesavel: item.pesavel ?? false,
       umas: item.umas ?? [],
     });
 
@@ -725,7 +721,7 @@ export class SessaoService {
           unidade: true, unidadePadrao: true, controle: true, tipControle: true, decQtd: true,
           pesoBruto: true, qtdNeg: true, qtdEntregue: true,
           qtdConferidaSankhya: true, qtdConferidaLocal: true,
-          divideMult: true, fatorConv: true, lisControles: true, usaConfPeso: true, pesavel: true,
+          divideMult: true, fatorConv: true, lisControles: true, usaConfPeso: true,
         },
       }),
       this.prisma.sessaoCodigoBarras.findMany({ where: { sessaoId } }),
@@ -782,7 +778,6 @@ export class SessaoService {
         imagem: null,
         lisControles: item.lisControles ?? null,
         usaConfPeso: item.usaConfPeso,
-        pesavel: item.pesavel,
         sequencia: item.sequencia,
       });
     }

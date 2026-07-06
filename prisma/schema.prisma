@@ -116,7 +116,6 @@ model SessaoItem {
   imagem       String?
   lisControles String?
   usaConfPeso  Boolean   @default(false)
-  pesavel      Boolean   @default(false)
 
   @@unique([sessaoId, sequencia])
 }

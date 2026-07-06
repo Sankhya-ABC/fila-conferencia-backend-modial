@@ -689,25 +689,6 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // Peso bruto total: soma do peso de todos os volumes conferidos
     const pesoBrutoTotal = dados.volumes.reduce((s, v) => s + (v.peso ?? 0), 0);
 
-    // Soma pesos de itens pesáveis (AD_PESAVEL='S') já gravados no TGFITE
-    let pesavelBruto = 0;
-    let pesavelLiq = 0;
-    try {
-      const pesRaw = await this.loadRecordsClient.loadRecords({
-        rootEntity: 'ItemNota',
-        fieldset: 'PESOBRUTO,PESOLIQ',
-        criteria: { expression: 'NUNOTA = ?', parameters: [{ value: sessao.numeroUnico, type: 'I' }] },
-        joins: [{ path: 'Produto', fieldset: 'AD_PESAVEL' }],
-      });
-      for (const row of this.loadRecordsClient.parseEntities(pesRaw)) {
-        if (String(row['Produto_AD_PESAVEL'] ?? 'N') === 'S') {
-          pesavelBruto += Number(row['PESOBRUTO'] ?? 0);
-          pesavelLiq += Number(row['PESOLIQ'] ?? 0);
-        }
-      }
-    } catch {
-      // não bloqueia finalização
-    }
 
     // Recovery: garante que TGFCON2 existe antes de inserir TGFCOI2
     // Tenta INSERT; se falhar (já existe ou validação), tenta UPDATE para confirmar existência.
@@ -849,7 +830,6 @@ export class ConferenciaService implements OnApplicationBootstrap {
       const tgfcabSimp: Record<string, any> = {};
       if (temAdCubagem) tgfcabSimp['QTDVOL'] = totalVol;
       if (pesoBrutoTotal > 0) tgfcabSimp['PESOBRUTOMANUAL'] = pesoBrutoTotal;
-      if (pesavelBruto > 0) { tgfcabSimp['PESOBRUTO'] = pesavelBruto; tgfcabSimp['PESOLIQ'] = pesavelLiq; }
       if (Object.keys(tgfcabSimp).length > 0) {
         this.datasetSP.save({ entityName: 'CabecalhoNota', pk: { NUNOTA: dados.numeroUnico }, fieldsAndValues: tgfcabSimp })
           .catch(() => this.logger.warn('[TGFCAB] falhou (non-blocking)'));
@@ -1038,7 +1018,6 @@ export class ConferenciaService implements OnApplicationBootstrap {
     const tgfcabDet: Record<string, any> = {};
     if (temAdCubagem) tgfcabDet['QTDVOL'] = qtdVol;
     if (pesoBrutoTotal > 0) tgfcabDet['PESOBRUTOMANUAL'] = pesoBrutoTotal;
-    if (pesavelBruto > 0) { tgfcabDet['PESOBRUTO'] = pesavelBruto; tgfcabDet['PESOLIQ'] = pesavelLiq; }
     if (Object.keys(tgfcabDet).length > 0) {
       this.datasetSP.save({
         entityName: 'CabecalhoNota',

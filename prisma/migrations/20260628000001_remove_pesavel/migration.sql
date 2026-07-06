@@ -1,0 +1,1 @@
+ALTER TABLE "SessaoItem" DROP COLUMN IF EXISTS "pesavel";

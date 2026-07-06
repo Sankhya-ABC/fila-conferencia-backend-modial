@@ -127,32 +127,6 @@ export class MoverItemVolumeParams {
   qtd?: number;
 }
 
-export class GravarPesoItemBody {
-  @ApiProperty({ example: 12345 })
-  @Type(() => Number)
-  @IsNumber()
-  @IsNotEmpty()
-  nunota: number;
-
-  @ApiProperty({ example: 1 })
-  @Type(() => Number)
-  @IsNumber()
-  @IsNotEmpty()
-  sequencia: number;
-
-  @ApiProperty({ example: 2.450 })
-  @Type(() => Number)
-  @IsNumber()
-  @IsNotEmpty()
-  pesobruto: number;
-
-  @ApiProperty({ example: 2.450 })
-  @Type(() => Number)
-  @IsNumber()
-  @IsNotEmpty()
-  pesoliq: number;
-}
-
 export class ResolverCodigoBarrasDto {
   @ApiProperty({ example: 1234 })
   @Type(() => Number)

@@ -260,7 +260,7 @@ export class DashboardService {
           dtAbertura: true,
           dtFechamento: true,
           qtdVol: true,
-          _count: { select: { itens: true } },
+          itens: { select: { qtdConferidaLocal: true } },
         },
       });
 
@@ -273,7 +273,7 @@ export class DashboardService {
           s.dtAbertura && s.dtFechamento && s.dtFechamento > s.dtAbertura
             ? Math.round((s.dtFechamento.getTime() - s.dtAbertura.getTime()) / 1000)
             : 0,
-        totalItens: s._count.itens,
+        totalItens: s.itens.reduce((a, i) => a + i.qtdConferidaLocal, 0),
         totalVolumes: s.qtdVol ?? 0,
         abandonada: s.status !== 'F',
       }));

@@ -30,6 +30,7 @@ import { UsuarioModule } from './modules/usuario/usuario.module';
 import { SessaoHttpModule } from './modules/sessao-http/sessao-http.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { BalancaModule } from './modules/balanca/balanca.module';
+import { DownloadModule } from './modules/download/download.module';
 import { PrismaModule } from 'prisma/prisma.module';
 
 @Module({
@@ -59,6 +60,7 @@ import { PrismaModule } from 'prisma/prisma.module';
     SessaoHttpModule,
     DashboardModule,
     BalancaModule,
+    DownloadModule,
     TenantManagerModule,
     AuthModule,
     LoggerModule,
