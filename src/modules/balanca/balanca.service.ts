@@ -26,6 +26,26 @@ export class BalancaService implements OnModuleDestroy {
 
   async listar(): Promise<BalancaCompleta[]> {
     const rows: BalancaCompleta[] = await this.prisma.$queryRaw`
+      SELECT b.*, COALESCE(
+        (SELECT array_agg(bu."idUsuario") FROM "BalancaUsuario" bu WHERE bu."balancaId" = b.id),
+        ARRAY[]::integer[]
+      ) AS "idsUsuarios"
+      FROM "Balanca" b WHERE b.ativo = true ORDER BY b.nome ASC
+    `;
+    return rows;
+  }
+
+  /** Balanças vinculadas ao usuário logado — fallback para todas as ativas se ele não tiver nenhum vínculo. */
+  async listarParaUsuario(idUsuario: number): Promise<BalancaCompleta[]> {
+    const vinculadas: BalancaCompleta[] = await this.prisma.$queryRaw`
+      SELECT b.* FROM "Balanca" b
+      JOIN "BalancaUsuario" bu ON bu."balancaId" = b.id
+      WHERE b.ativo = true AND bu."idUsuario" = ${idUsuario}
+      ORDER BY b.nome ASC
+    `;
+    if (vinculadas.length > 0) return vinculadas;
+
+    const rows: BalancaCompleta[] = await this.prisma.$queryRaw`
       SELECT * FROM "Balanca" WHERE ativo = true ORDER BY nome ASC
     `;
     return rows;
@@ -43,30 +63,36 @@ export class BalancaService implements OnModuleDestroy {
     const id              = randomUUID();
     const tipoComunicacao = dto.tipoComunicacao ?? 'HTTP';
 
-    await this.prisma.$executeRaw`
-      INSERT INTO "Balanca" (
-        id, nome, fabricante, modelo, "tipoComunicacao",
-        "portaCom", "baudRate", "dataBits", paridade, "stopBits", "protocoloSerial",
-        protocolo, ip, porta, rota, ativo
-      ) VALUES (
-        ${id},
-        ${dto.nome},
-        ${dto.fabricante        ?? 'Toledo'},
-        ${dto.modelo            ?? null},
-        ${tipoComunicacao},
-        ${dto.portaCom          ?? null},
-        ${dto.baudRate          ?? 4800},
-        ${dto.dataBits          ?? 8},
-        ${dto.paridade          ?? 'NONE'},
-        ${dto.stopBits          ?? 1},
-        ${dto.protocoloSerial   ?? 'P05'},
-        ${dto.protocolo         ?? (tipoComunicacao === 'TOLEDO_TCP' ? 'TOLEDO_TCP' : 'HTTP')},
-        ${dto.ip                ?? null},
-        ${dto.porta             ?? null},
-        ${dto.rota              ?? '/peso'},
-        ${dto.ativo             ?? true}
-      )
-    `;
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`
+        INSERT INTO "Balanca" (
+          id, nome, fabricante, modelo, "tipoComunicacao",
+          "portaCom", "baudRate", "dataBits", paridade, "stopBits", "protocoloSerial",
+          protocolo, ip, porta, rota, ativo
+        ) VALUES (
+          ${id},
+          ${dto.nome},
+          ${dto.fabricante        ?? 'Toledo'},
+          ${dto.modelo            ?? null},
+          ${tipoComunicacao},
+          ${dto.portaCom          ?? null},
+          ${dto.baudRate          ?? 4800},
+          ${dto.dataBits          ?? 8},
+          ${dto.paridade          ?? 'NONE'},
+          ${dto.stopBits          ?? 1},
+          ${dto.protocoloSerial   ?? 'P05'},
+          ${dto.protocolo         ?? (tipoComunicacao === 'TOLEDO_TCP' ? 'TOLEDO_TCP' : 'HTTP')},
+          ${dto.ip                ?? null},
+          ${dto.porta             ?? null},
+          ${dto.rota              ?? '/peso'},
+          ${dto.ativo             ?? true}
+        )
+      `;
+
+      if (dto.idsUsuarios !== undefined) {
+        await this.sincronizarVinculos(tx, id, dto.idsUsuarios);
+      }
+    });
 
     return this.buscarOuFalhar(id);
   }
@@ -80,15 +106,32 @@ export class BalancaService implements OnModuleDestroy {
       if (val !== undefined) campos.push({ col, val });
     }
 
-    if (campos.length > 0) {
-      const set = campos.map((c, i) => `${c.col} = $${i + 2}`).join(', ');
-      await this.prisma.$executeRawUnsafe(
-        `UPDATE "Balanca" SET ${set} WHERE id = $1`,
-        id, ...campos.map(c => c.val),
-      );
-    }
+    await this.prisma.$transaction(async (tx) => {
+      if (campos.length > 0) {
+        const set = campos.map((c, i) => `${c.col} = $${i + 2}`).join(', ');
+        await tx.$executeRawUnsafe(
+          `UPDATE "Balanca" SET ${set} WHERE id = $1`,
+          id, ...campos.map(c => c.val),
+        );
+      }
+
+      if (dto.idsUsuarios !== undefined) {
+        await this.sincronizarVinculos(tx, id, dto.idsUsuarios);
+      }
+    });
 
     return this.buscarOuFalhar(id);
+  }
+
+  /** Substitui os vínculos usuário↔balança pela lista informada (delete + insert). */
+  private async sincronizarVinculos(tx: any, balancaId: string, idsUsuarios: number[]): Promise<void> {
+    await tx.$executeRaw`DELETE FROM "BalancaUsuario" WHERE "balancaId" = ${balancaId}`;
+    for (const idUsuario of idsUsuarios) {
+      await tx.$executeRaw`
+        INSERT INTO "BalancaUsuario" (id, "balancaId", "idUsuario")
+        VALUES (${randomUUID()}, ${balancaId}, ${idUsuario})
+      `;
+    }
   }
 
   async remover(id: string) {

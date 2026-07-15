@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle } from '@nestjs/throttler';
 import { NoAuthApp } from 'src/core/guards/auth-app/no-auth-app.decorator';
@@ -41,6 +41,12 @@ export class BalancaController {
   @ApiOperation({ summary: 'Listar balanças ativas — payload reduzido para dropdowns' })
   listarAtivas() {
     return this.service.listarAtivas();
+  }
+
+  @Get('minhas')
+  @ApiOperation({ summary: 'Listar balanças vinculadas ao usuário logado (fallback: todas as ativas)' })
+  listarMinhas(@Req() req: any) {
+    return this.service.listarParaUsuario(req.user.idUsuario);
   }
 
   @Get('portas-com')

@@ -36,6 +36,8 @@ model User {
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+
+  balancas     BalancaUsuario[]
 }
 
 model Dominio {
@@ -170,6 +172,19 @@ model Balanca {
   porta           Int?
   rota            String  @default("/peso")
   ativo           Boolean @default(true)
+
+  usuarios        BalancaUsuario[]
+}
+
+model BalancaUsuario {
+  id        String   @id @default(uuid())
+  balancaId String
+  balanca   Balanca  @relation(fields: [balancaId], references: [id], onDelete: Cascade)
+  idUsuario Int
+  usuario   User     @relation(fields: [idUsuario], references: [codigo], onDelete: Cascade)
+  criadoEm  DateTime @default(now())
+
+  @@unique([balancaId, idUsuario])
 }
 
 model SessaoItemUma {

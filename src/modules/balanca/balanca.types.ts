@@ -15,6 +15,7 @@ export interface BalancaCompleta {
   porta: number | null;
   rota: string;
   ativo: boolean;
+  idsUsuarios?: number[];
 }
 
 /** Mapa campo DTO → coluna SQL (com aspas para camelCase) */

@@ -1,6 +1,6 @@
 import { ApiProperty, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
+import { ArrayUnique, IsArray, IsBoolean, IsEnum, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export enum TipoComunicacao {
   SERIAL_RS232 = 'SERIAL_RS232',
@@ -91,6 +91,10 @@ export class CriarBalancaDto {
   @ApiProperty({ example: true, required: false })
   @IsBoolean() @IsOptional()
   ativo?: boolean;
+
+  @ApiProperty({ example: [1, 2], required: false, description: 'Códigos dos usuários (máquinas/estações) vinculados a esta balança' })
+  @IsArray() @ArrayUnique() @IsInt({ each: true }) @IsOptional()
+  idsUsuarios?: number[];
 }
 
 export class AtualizarBalancaDto extends PartialType(CriarBalancaDto) {}
