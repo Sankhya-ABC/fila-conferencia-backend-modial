@@ -1,15 +1,13 @@
--- Cria o tipo enum DbDialect no Postgres, caso não exista
--- (a migration add_master_user criou a coluna como TEXT em vez de ENUM)
--- Nota: este bloco é idempotente em qualquer banco (admin ou tenant)
+-- Cria o tipo enum DbDialect no Postgres, caso não exista, e converte a
+-- coluna de TEXT para o tipo enum correto (só na tabela Tenant, se existir).
+-- Nota: unificado num único bloco DO porque o TenantMigratorService executa
+-- o arquivo inteiro via $executeRawUnsafe (protocolo estendido do Postgres,
+-- que não aceita múltiplos statements top-level numa mesma chamada).
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'DbDialect') THEN
     CREATE TYPE "DbDialect" AS ENUM ('SQLSERVER', 'ORACLE');
   END IF;
-END $$;
 
--- Converte a coluna de TEXT para o tipo enum correto
--- Só executa se a tabela Tenant existir (admin DB) — em tenant DBs este bloco é ignorado
-DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.tables
     WHERE table_name = 'Tenant' AND table_schema = 'public'
