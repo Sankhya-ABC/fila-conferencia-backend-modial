@@ -510,10 +510,11 @@ export class ConferenciaService implements OnApplicationBootstrap {
     let obterQtdBalanca: string | null  = null;
     let qtdAmaior: string | null        = 'C';
     let fataoConcluir: string | null    = 'N';
+    let exibirProd: string | null       = null;
     if (nucco != null) {
       const ccoRaw = await this.loadRecordsClient.loadRecords({
         rootEntity: 'ConfiguracaoConferencia',
-        fieldset: 'FORMACAOVOLUMES,OBTERQTDBALANCA,QTDAMAIOR,FATAOCONCLUIR',
+        fieldset: 'FORMACAOVOLUMES,OBTERQTDBALANCA,QTDAMAIOR,FATAOCONCLUIR,EXIBIRPROD',
         criteria: { expression: 'NUCCO = ?', parameters: [{ value: Number(nucco), type: 'I' }] },
         limit: 1,
       }).catch(() => null);
@@ -523,6 +524,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         obterQtdBalanca  = (ccoRows[0]?.OBTERQTDBALANCA  as string | null) ?? null;
         qtdAmaior        = (ccoRows[0]?.QTDAMAIOR         as string | null) ?? 'C';
         fataoConcluir    = (ccoRows[0]?.FATAOCONCLUIR     as string | null) ?? 'N';
+        exibirProd       = (ccoRows[0]?.EXIBIRPROD        as string | null) ?? null;
       }
     }
 
@@ -541,6 +543,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       obterQtdBalanca,
       qtdAmaior,
       fataoConcluir,
+      exibirProd,
       temCubagem,
       idParceiro: Number(r.CODPARC),
       nomeParceiro: r['Parceiro_RAZAOSOCIAL'] ?? null,
@@ -585,7 +588,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
   // ─── Finalizar (batch-write de tudo para o Sankhya) ──────────────────────
 
-  private async atualizarObservacaoNota(numeroUnico: number, nomeUsuario: string): Promise<void> {
+  private async atualizarObservacaoNota(numeroUnico: number, nomeUsuario: string, dhFinalizacao: string): Promise<void> {
     const raw = await this.loadRecordsClient.loadRecords({
       rootEntity: 'CabecalhoNota',
       fieldset: 'OBSERVACAO,AD_NUMTALAO',
@@ -603,6 +606,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
     const linhas: string[] = [];
     if (numModial) linhas.push(`Pedido Modial: #${numModial}`);
     linhas.push(`Pedido Separado por: ${nomeUsuario}`);
+    linhas.push(`Conferência finalizada em: ${dhFinalizacao}`);
 
     const novaObs = obsAtual ? `${obsAtual}\n${linhas.join('\n')}` : linhas.join('\n');
 
@@ -835,7 +839,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
           .catch(() => this.logger.warn('[TGFCAB] falhou (non-blocking)'));
       }
 
-      await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario)
+      await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario, dh)
         .catch(() => this.logger.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
 
       if (temAdCubagem) {
@@ -845,7 +849,9 @@ export class ConferenciaService implements OnApplicationBootstrap {
         const gruposRel = todos.filter(g => g.altura != null || g.largura != null || g.comprimento != null || g.peso != null);
         if (gruposRel.length > 0)
           await this.gravarRelatorioCubagem(dados.numeroUnico, gruposRel, totalVol)
-            .catch(() => this.logger.warn('[AD_RELATORIOCUB] falhou (non-blocking)'));
+            .catch((e) => this.logger.warn(`[AD_RELATORIOCUB] falhou (non-blocking): ${e?.message ?? e}`));
+        else
+          this.logger.warn(`[AD_RELATORIOCUB] pulado — nenhum grupo com dimensões (NUNOTA=${dados.numeroUnico})`);
       }
 
       await this.sessaoService.marcarFinalizada(sessao.id);
@@ -1026,7 +1032,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       }).catch(() => this.logger.warn('[TGFCAB] falhou (non-blocking)'));
     }
 
-    await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario)
+    await this.atualizarObservacaoNota(dados.numeroUnico, nomeUsuario, dh)
       .catch(() => this.logger.warn('[TGFCAB OBSERVACAO] falhou (non-blocking)'));
 
     if (temAdCubagem && volumesComDim.length > 0) {
@@ -1038,7 +1044,9 @@ export class ConferenciaService implements OnApplicationBootstrap {
         else dimAgrupado.set(key, { qtd: 1, altura: v.altura, largura: v.largura, comprimento: v.comprimento, peso: v.peso });
       }
       await this.gravarRelatorioCubagem(dados.numeroUnico, [...dimAgrupado.values()], dados.volumes.length)
-        .catch(() => this.logger.warn('[AD_RELATORIOCUB] falhou (non-blocking)'));
+        .catch((e) => this.logger.warn(`[AD_RELATORIOCUB] falhou (non-blocking): ${e?.message ?? e}`));
+    } else if (temAdCubagem) {
+      this.logger.warn(`[AD_RELATORIOCUB] pulado — nenhum volume com dimensões (NUNOTA=${dados.numeroUnico})`);
     }
 
     await this.sessaoService.marcarFinalizada(sessao.id);
