@@ -10,6 +10,7 @@ import { PrismaService } from 'prisma/prisma.service';
 import { TenantService } from 'src/core/tenant/tenant.service';
 import { tenantStorage } from 'src/core/tenant/tenant.context';
 import { InflightService } from 'src/core/inflight/inflight.service';
+import { formatarDataHoraBR } from 'src/core/utils/data-hora.util';
 
 async function comRetry<T>(fn: () => Promise<T>, tentativas = 3, delayMs = 2000): Promise<T> {
   let ultimo: any;
@@ -679,10 +680,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
     const usuarioDb = await this.prisma.user.findFirst({ where: { codigo: sessao.idUsuario } });
     const nomeUsuario = usuarioDb?.nome ?? String(sessao.idUsuario);
 
-    const now = new Date();
-    const date = now.toISOString().slice(0, 10).split('-').reverse().join('/');
-    const hour = now.toISOString().slice(11, 16);
-    const dh = `${date} ${hour}`;
+    const dh = formatarDataHoraBR();
 
     const erros: string[] = [];
     const pushErro = (label: string, e?: any) => {

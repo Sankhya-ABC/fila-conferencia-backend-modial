@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as puppeteer from 'puppeteer';
 import { NumeroConferenciaFilter } from '../dto/model';
 import { ArquivoHelper } from './arquivo.helper';
+import { formatarDataHoraBR } from '../../core/utils/data-hora.util';
 
 @Injectable()
 export class ArquivoService {
@@ -51,13 +52,7 @@ export class ArquivoService {
     const totalVolumes = rows.length;
     const totalVol = String(totalVolumes).padStart(2, '0');
 
-    const now = new Date();
-    const dd = String(now.getDate()).padStart(2, '0');
-    const mm = String(now.getMonth() + 1).padStart(2, '0');
-    const yyyy = now.getFullYear();
-    const hh = String(now.getHours()).padStart(2, '0');
-    const min = String(now.getMinutes()).padStart(2, '0');
-    const printDateTime = `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+    const printDateTime = formatarDataHoraBR();
 
     const volumes = rows.map((row, index) => {
       let seqVol;
