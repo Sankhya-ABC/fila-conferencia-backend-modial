@@ -3,7 +3,7 @@ import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-reco
 import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
 import { GatewayClient } from 'src/http-client/gateway/gateway.client';
 import { ConferenciaHelper } from './conferencia.helper';
-import { FilaConferenciaFilter, IniciarConferenciaBody } from './dto/conferencia.dto';
+import { FilaConferenciaFilter, IniciarConferenciaBody, ConcluirEtapaBody } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import { SessaoService } from '../sessao/sessao.service';
 import { PrismaService } from 'prisma/prisma.service';
@@ -395,7 +395,21 @@ export class ConferenciaService implements OnApplicationBootstrap {
       } catch { /* soft-fail — não bloqueia a fila */ }
     }
 
+    data = await this._anexarEtapas(data);
+
     return { data, hasNextPage: hasNextPage && data.length >= perPage, page, perPage };
+  }
+
+  // Anexa o checklist de etapas (pesável/não-pesável) a cada nota — só para tenants
+  // com o módulo de conferência parcial habilitado. Uma única query em lote.
+  private async _anexarEtapas<T extends { numeroUnico: number }>(data: T[]): Promise<(T & { etapas?: { tipo: string; status: string; idUsuarioConclusao: number | null }[] })[]> {
+    const slug = tenantStorage.getStore();
+    if (!slug) return data;
+    const temConferenciaParcial = await this.tenantService.hasModulo(slug, 'CONFERENCIA_PARCIAL');
+    if (!temConferenciaParcial) return data;
+
+    const mapa = await this.sessaoService.listarEtapasPorNumerosUnicos(data.map((d) => d.numeroUnico));
+    return data.map((d) => ({ ...d, etapas: mapa.get(d.numeroUnico) }));
   }
 
   // Extração do path F-only para manter getFilaConferencias legível.
@@ -450,7 +464,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
       if (!rawFin) return { data: [], hasNextPage: false, total, page, perPage };
 
-      const data = this.loadRecordsClient.parseEntities(rawFin).map((r) => ({
+      let data = this.loadRecordsClient.parseEntities(rawFin).map((r) => ({
         codigoStatus: 'F',
         statusSankhya: 'F',
         emAndamentoNativo: false,
@@ -468,6 +482,8 @@ export class ConferenciaService implements OnApplicationBootstrap {
         AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
         apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
       }));
+
+      data = await this._anexarEtapas(data);
 
       return { data, hasNextPage: (page + 1) * perPage < total, total, page, perPage };
     } catch {
@@ -652,6 +668,30 @@ export class ConferenciaService implements OnApplicationBootstrap {
     });
   }
 
+  // ─── Conferência parcial (etapas pesável / não-pesável) ───────────────────
+
+  async getEtapas({ numeroUnico }: NumeroUnicoFilter) {
+    const sessao = await this.sessaoService.buscarPorNota(numeroUnico);
+    if (!sessao) return [];
+    return this.sessaoService.getEtapas(sessao.id);
+  }
+
+  async postConcluirEtapa({ numeroConferencia, tipo }: ConcluirEtapaBody, idUsuario: number) {
+    const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
+    if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
+
+    const pendentes = await this.sessaoService.contarPendentesPorTipo(sessao.id, tipo);
+    if (pendentes > 0) {
+      throw new BadRequestException(
+        `Ainda há ${pendentes} item(ns) ${tipo === 'PESAVEL' ? 'pesável(is)' : 'não pesável(is)'} pendente(s) de conferência.`,
+      );
+    }
+
+    await this.sessaoService.concluirEtapa(sessao.id, tipo, idUsuario);
+    this.filaCache.clear();
+    return { ok: true };
+  }
+
   async excluirSessao({ numeroUnico }: NumeroUnicoFilter) {
     const sessao = await this.sessaoService.buscarPorNota(numeroUnico);
     if (!sessao) throw new BadRequestException('Sessão não encontrada para esta nota.');
@@ -667,12 +707,20 @@ export class ConferenciaService implements OnApplicationBootstrap {
     this.filaCache.clear();
   }
 
-  async postFinalizarConferencia({ numeroConferencia }: NumeroConferenciaFilter) {
+  async postFinalizarConferencia({ numeroConferencia }: NumeroConferenciaFilter, idUsuarioFinalizacao?: number) {
     this.filaCache.clear(); // nota finalizada — invalida cache da fila
     const slug = tenantStorage.getStore()!;
     const temAdCubagem = await this.tenantService.hasModulo(slug, 'AD_CUBAGEM');
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
+
+    const { ok, pendentes } = await this.sessaoService.todasEtapasConcluidas(sessao.id);
+    if (!ok) {
+      const nomes = pendentes.map((p) => (p === 'PESAVEL' ? 'pesável' : 'não pesável'));
+      throw new BadRequestException(
+        `Conferência ainda não pode ser finalizada: etapa(s) ${nomes.join(' e ')} pendente(s) de conclusão.`,
+      );
+    }
 
     const dados = await this.sessaoService.getDadosFinalizacao(sessao.id);
     if (!dados) throw new BadRequestException('Dados da sessão não encontrados.');
@@ -852,7 +900,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
           this.logger.warn(`[AD_RELATORIOCUB] pulado — nenhum grupo com dimensões (NUNOTA=${dados.numeroUnico})`);
       }
 
-      await this.sessaoService.marcarFinalizada(sessao.id);
+      await this.sessaoService.marcarFinalizada(sessao.id, idUsuarioFinalizacao);
       return { qtdVol: totalVol, numeroConferencia };
     }
 
@@ -1047,7 +1095,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       this.logger.warn(`[AD_RELATORIOCUB] pulado — nenhum volume com dimensões (NUNOTA=${dados.numeroUnico})`);
     }
 
-    await this.sessaoService.marcarFinalizada(sessao.id);
+    await this.sessaoService.marcarFinalizada(sessao.id, idUsuarioFinalizacao);
 
     return { qtdVol, numeroConferencia };
   }

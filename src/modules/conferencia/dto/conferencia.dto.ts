@@ -86,3 +86,7 @@ export class FaturarNotaDto {
   @Type(() => Number) @IsInt() codTipOper: number;
   @IsOptional() @IsString() serie?: string;
 }
+
+export class ConcluirEtapaBody extends NumeroConferenciaFilter {
+  @IsString() tipo: 'PESAVEL' | 'NAO_PESAVEL';
+}

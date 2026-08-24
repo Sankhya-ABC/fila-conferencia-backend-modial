@@ -9,6 +9,8 @@ import {
 } from './dto/conferencia.dto';
 import { SessaoService } from '../sessao/sessao.service';
 import { PrismaService } from 'prisma/prisma.service';
+import { TenantService } from 'src/core/tenant/tenant.service';
+import { tenantStorage } from 'src/core/tenant/tenant.context';
 
 type LoadRecordsParams = Parameters<SankhyaLoadRecordsClient['loadRecords']>[0];
 
@@ -22,6 +24,7 @@ export class ConferenciaHelper {
     private readonly dbExplorer: SankhyaDBExplorerSPClient,
     private readonly sessaoService: SessaoService,
     private readonly prisma: PrismaService,
+    private readonly tenantService: TenantService,
   ) {}
 
   async verificarStatus({ numeroUnico }: NumeroUnicoFilter) {
@@ -397,12 +400,16 @@ export class ConferenciaHelper {
       }
     }
 
+    const slug = tenantStorage.getStore()!;
+    const criarEtapasParciais = await this.tenantService.hasModulo(slug, 'CONFERENCIA_PARCIAL');
+
     await this.sessaoService.criarSessao({
       numeroUnico, numeroConferencia, idUsuario,
       codigoTipoMovimento, descricaoTipoOperacao, formacaoVolumes, buscarCodigoBarraPor,
       nomeParceiro,
       itens: itens.map(i => ({ ...i, UMAS: umaMap.get(Number(i.CODPROD)) ?? [] })),
       codigos,
+      criarEtapasParciais,
     });
   }
 

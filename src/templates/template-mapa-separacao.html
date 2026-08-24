@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, sans-serif; font-size: 12px; color: #000; }
+
+@page { size: A4; margin: 1.2cm; }
+
+.header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 12px; }
+.header h1 { font-size: 18px; }
+.header .tipo { font-size: 14px; font-weight: bold; text-transform: uppercase; }
+.header .print-info { text-align: right; font-size: 11px; }
+
+.dados-nota { display: flex; flex-wrap: wrap; gap: 4px 24px; margin-bottom: 14px; font-size: 12px; }
+.dados-nota span strong { display: inline-block; min-width: 70px; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { border: 1px solid #999; padding: 5px 6px; text-align: left; font-size: 11px; }
+th { background: #eee; }
+td.qtd { text-align: right; width: 90px; }
+td.check { width: 30px; text-align: center; }
+.check-box { display: inline-block; width: 14px; height: 14px; border: 1px solid #000; }
+
+.footer { margin-top: 16px; font-size: 10px; color: #555; text-align: right; }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <h1>Mapa de Separação</h1>
+      <div class="tipo">Guia {{tipoLabel}}</div>
+    </div>
+    <div class="print-info">{{printDateTime}}</div>
+  </div>
+
+  <div class="dados-nota">
+    <span><strong>Cliente:</strong> {{cliente}}</span>
+    <span><strong>Pedido:</strong> {{numTalao}}</span>
+    <span><strong>Nota:</strong> {{numeroUnico}}</span>
+    <span><strong>UF:</strong> {{uf}}</span>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="check"></th>
+        <th>Código</th>
+        <th>Produto</th>
+        <th>Controle/Lote</th>
+        <th class="qtd">Quantidade</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each itens}}
+      <tr>
+        <td class="check"><span class="check-box"></span></td>
+        <td>{{idProduto}}</td>
+        <td>{{nomeProduto}} {{#if complemento}}— {{complemento}}{{/if}}</td>
+        <td>{{#if controle}}{{controle}}{{else}}—{{/if}}</td>
+        <td class="qtd">{{quantidade}} {{unidade}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <div class="footer">Total de itens: {{totalItens}}</div>
+
+</body>
+</html>

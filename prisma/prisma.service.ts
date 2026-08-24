@@ -39,6 +39,7 @@ export class PrismaService implements OnModuleDestroy {
   get sessaoVolume() { return this.current().sessaoVolume; }
   get sessaoLeitura() { return this.current().sessaoLeitura; }
   get sessaoCodigoBarras() { return this.current().sessaoCodigoBarras; }
+  get sessaoEtapa() { return this.current().sessaoEtapa; }
   get produtoCache() { return this.current().produtoCache; }
   get codigoBarrasCache() { return this.current().codigoBarrasCache; }
   get logLogin() { return this.current().logLogin; }

@@ -100,6 +100,7 @@ export class SessaoService {
     nomeParceiro?: string | null;
     itens: any[];
     codigos: any[];
+    criarEtapasParciais?: boolean;
   }) {
     const {
       numeroUnico, numeroConferencia, idUsuario,
@@ -107,6 +108,7 @@ export class SessaoService {
       buscarCodigoBarraPor = 'A',
       nomeParceiro,
       itens, codigos,
+      criarEtapasParciais = false,
     } = params;
 
     // Limpa sessão anterior (finalizada ou travada) se existir
@@ -192,6 +194,22 @@ export class SessaoService {
           ? tx.sessaoItemUma.createMany({ data: umaData, skipDuplicates: true })
           : Promise.resolve(),
       ]);
+
+      if (criarEtapasParciais) {
+        const temPesavel = itens.some((i) => i.UTILICONFPESO === true || i.UTILICONFPESO === 'S');
+        const temNaoPesavel = itens.some((i) => !(i.UTILICONFPESO === true || i.UTILICONFPESO === 'S'));
+        const TODOS: Array<'PESAVEL' | 'NAO_PESAVEL'> = ['PESAVEL', 'NAO_PESAVEL'];
+        const aplicaveis: Record<'PESAVEL' | 'NAO_PESAVEL', boolean> = { PESAVEL: temPesavel, NAO_PESAVEL: temNaoPesavel };
+        await tx.sessaoEtapa.createMany({
+          data: TODOS.map((tipo) => ({
+            sessaoId: s.id,
+            tipo,
+            // Etapa sem itens daquele tipo nasce já concluída — não bloqueia a finalização.
+            status: aplicaveis[tipo] ? 'P' : 'C',
+            dtConclusao: aplicaveis[tipo] ? null : new Date(),
+          })),
+        });
+      }
 
       return s;
     });
@@ -470,12 +488,56 @@ export class SessaoService {
     }
   }
 
-  async marcarFinalizada(sessaoId: string) {
+  async marcarFinalizada(sessaoId: string, idUsuarioFinalizacao?: number) {
     await this.prisma.sessaoConferencia.update({
       where: { id: sessaoId },
-      data: { status: 'F', dtFechamento: new Date() },
+      data: { status: 'F', dtFechamento: new Date(), idUsuarioFinalizacao },
     });
     this.sessaoCache.delete(sessaoId);
+  }
+
+  // ─────────────────────────────────────────────
+  // Etapas (conferência parcial — pesável / não-pesável)
+  // ─────────────────────────────────────────────
+
+  async getEtapas(sessaoId: string) {
+    return this.prisma.sessaoEtapa.findMany({ where: { sessaoId } });
+  }
+
+  // Usado pela fila (cards) para exibir o checklist pesável/não-pesável em lote,
+  // evitando N chamadas /conferencias/etapas (uma por nota visível na página).
+  // idUsuarioConclusao é incluído para o front distinguir "concluída por alguém"
+  // de "auto-concluída por não existir item daquele tipo neste pedido" (ver criarSessao).
+  async listarEtapasPorNumerosUnicos(numerosUnicos: number[]): Promise<Map<number, { tipo: string; status: string; idUsuarioConclusao: number | null }[]>> {
+    if (!numerosUnicos.length) return new Map();
+    const sessoes = await this.prisma.sessaoConferencia.findMany({
+      where: { numeroUnico: { in: numerosUnicos } },
+      select: { numeroUnico: true, etapas: { select: { tipo: true, status: true, idUsuarioConclusao: true } } },
+    });
+    return new Map(sessoes.map((s) => [s.numeroUnico, s.etapas]));
+  }
+
+  async contarPendentesPorTipo(sessaoId: string, tipo: 'PESAVEL' | 'NAO_PESAVEL'): Promise<number> {
+    const itens = await this.prisma.sessaoItem.findMany({
+      where: { sessaoId, usaConfPeso: tipo === 'PESAVEL' },
+      select: { qtdNeg: true, qtdConferidaSankhya: true, qtdConferidaLocal: true },
+    });
+    return itens.filter(
+      (i) => Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5)) < Number(i.qtdNeg.toFixed(5)),
+    ).length;
+  }
+
+  async concluirEtapa(sessaoId: string, tipo: 'PESAVEL' | 'NAO_PESAVEL', idUsuario: number) {
+    await this.prisma.sessaoEtapa.updateMany({
+      where: { sessaoId, tipo },
+      data: { status: 'C', idUsuarioConclusao: idUsuario, dtConclusao: new Date() },
+    });
+  }
+
+  async todasEtapasConcluidas(sessaoId: string): Promise<{ ok: boolean; pendentes: string[] }> {
+    const etapas = await this.prisma.sessaoEtapa.findMany({ where: { sessaoId } });
+    const pendentes = etapas.filter((e) => e.status !== 'C').map((e) => e.tipo);
+    return { ok: pendentes.length === 0, pendentes };
   }
 
   async excluirSessao(sessaoId: string) {

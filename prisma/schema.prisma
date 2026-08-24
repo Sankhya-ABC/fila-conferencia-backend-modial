@@ -83,11 +83,30 @@ model SessaoConferencia {
   dtAbertura   DateTime?
   dtFechamento DateTime?
 
+  idUsuarioFinalizacao Int?
+
   itens    SessaoItem[]
   volumes  SessaoVolume[]
   leituras SessaoLeitura[]
   codigos  SessaoCodigoBarras[]
   itensUma SessaoItemUma[]
+  etapas   SessaoEtapa[]
+}
+
+model SessaoEtapa {
+  id       String            @id @default(uuid())
+  sessaoId String
+  sessao   SessaoConferencia @relation(fields: [sessaoId], references: [id], onDelete: Cascade)
+
+  tipo   String // 'PESAVEL' | 'NAO_PESAVEL'
+  status String @default("P") // P=Pendente, A=Andamento, C=Concluída
+
+  idUsuarioInicio    Int?
+  idUsuarioConclusao Int?
+  dtInicio           DateTime?
+  dtConclusao        DateTime?
+
+  @@unique([sessaoId, tipo])
 }
 
 model SessaoItem {

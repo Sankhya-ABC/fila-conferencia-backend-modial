@@ -99,4 +99,40 @@ export class ArquivoService {
 
     return Buffer.from(pdfUint8);
   }
+
+  async downloadMapaSeparacao(
+    numeroUnico: number,
+    tipo: 'PESAVEL' | 'NAO_PESAVEL',
+  ): Promise<Buffer | null> {
+    const dados = await this.arquivoHelper.obterMapaSeparacao(numeroUnico, tipo);
+    if (!dados.itens.length) return null;
+
+    const filePath = path.join(
+      process.cwd(),
+      'src/templates/template-mapa-separacao.html',
+    );
+    const html = fs.readFileSync(filePath, 'utf-8');
+    const template = Handlebars.compile(html);
+
+    const finalHtml = template({
+      ...dados,
+      tipoLabel: tipo === 'PESAVEL' ? 'Pesável' : 'Não Pesável',
+      totalItens: dados.itens.length,
+      printDateTime: formatarDataHoraBR(),
+    });
+
+    const browser = await puppeteer.launch({
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH ?? '/usr/bin/chromium',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+    const page = await browser.newPage();
+
+    await page.setContent(finalHtml, { waitUntil: 'load' });
+
+    const pdfUint8 = await page.pdf({ format: 'A4', printBackground: true });
+
+    await browser.close();
+
+    return Buffer.from(pdfUint8);
+  }
 }

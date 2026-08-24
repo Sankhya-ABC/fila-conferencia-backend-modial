@@ -132,6 +132,32 @@ export class ArquivoHelper {
     }
   }
 
+  // ─── Mapa de separação (guia pesável / não-pesável) ────────────────────────
+
+  async obterMapaSeparacao(numeroUnico: number, tipo: 'PESAVEL' | 'NAO_PESAVEL') {
+    const sessao = await this.sessaoService.buscarPorNota(numeroUnico);
+    if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada para esta nota.');
+
+    const todosItens = await this.sessaoService.getItensPedido(sessao.id);
+    const itens = todosItens.filter((i) => (tipo === 'PESAVEL' ? i.usaConfPeso : !i.usaConfPeso));
+
+    const notaInfo = await this.carregarInfoNota(numeroUnico);
+
+    return {
+      ...notaInfo,
+      numeroConferencia: sessao.numeroConferencia,
+      tipo,
+      itens: itens.map((i) => ({
+        idProduto: i.idProduto,
+        nomeProduto: i.nomeProduto,
+        complemento: i.complemento ?? '',
+        controle: i.controle && i.controle.trim() !== '' ? i.controle.trim() : null,
+        quantidade: i.quantidadeComercial,
+        unidade: i.unidadeComercial,
+      })),
+    };
+  }
+
   // ─── Carrega info da nota via LoadRecords ──────────────────────────────────
 
   private async carregarInfoNota(numeroUnico: number) {

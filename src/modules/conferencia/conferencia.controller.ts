@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { FaturarNotaDto } from './dto/conferencia.dto';
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { NoAuthApp } from 'src/core/guards/auth-app/no-auth-app.decorator';
@@ -7,6 +7,7 @@ import { ConferenciaService } from './conferencia.service';
 import {
   FilaConferenciaFilter,
   IniciarConferenciaBody,
+  ConcluirEtapaBody,
 } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 
@@ -45,8 +46,20 @@ export class ConferenciaController {
   }
 
   @Post('finalizar-conferencia')
-  postFinalizarConferencia(@Body() body: NumeroConferenciaFilter) {
-    return this.service.postFinalizarConferencia(body);
+  postFinalizarConferencia(@Body() body: NumeroConferenciaFilter, @Req() req: any) {
+    return this.service.postFinalizarConferencia(body, req.user.idUsuario);
+  }
+
+  @Get('etapas')
+  @ApiOperation({ summary: 'Consulta status das etapas (pesável/não-pesável) da conferência parcial' })
+  getEtapas(@Query() query: NumeroUnicoFilter) {
+    return this.service.getEtapas(query);
+  }
+
+  @Post('concluir-etapa')
+  @ApiOperation({ summary: 'Conclui a etapa pesável ou não-pesável da conferência parcial' })
+  postConcluirEtapa(@Body() body: ConcluirEtapaBody, @Req() req: any) {
+    return this.service.postConcluirEtapa(body, req.user.idUsuario);
   }
 
   @Post('excluir-sessao')
