@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from 'prisma/prisma.service';
 
 // ─── Tipos do cache em memória ───────────────────────────────────────────────
@@ -562,6 +562,20 @@ export class SessaoService {
   }) {
     const { sessaoId, seqVol, idProduto, unidade, controle, codigoBarras, qtd, qtdVolpad, peso } = params;
     const controleNorm = controle?.trim() || ' ';
+
+    // Sem item correspondente no pedido para esse produto+lote, a leitura fica
+    // órfã: não conta pra nenhum pendente e trava a finalização sem aparecer na tela.
+    const itemExiste = await this.prisma.sessaoItem.findFirst({
+      where: { sessaoId, idProduto, controle: controleNorm },
+      select: { id: true },
+    });
+    if (!itemExiste) {
+      throw new BadRequestException(
+        controleNorm === ' '
+          ? `Produto ${idProduto} não faz parte deste pedido.`
+          : `Produto ${idProduto} com lote/controle "${controleNorm}" não confere com o pedido.`,
+      );
+    }
 
     await this.garantirVolume(sessaoId, seqVol);
 
