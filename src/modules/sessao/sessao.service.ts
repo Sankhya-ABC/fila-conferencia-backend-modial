@@ -563,17 +563,22 @@ export class SessaoService {
     const { sessaoId, seqVol, idProduto, unidade, controle, codigoBarras, qtd, qtdVolpad, peso } = params;
     const controleNorm = controle?.trim() || ' ';
 
-    // Sem item correspondente no pedido para esse produto+lote, a leitura fica
-    // órfã: não conta pra nenhum pendente e trava a finalização sem aparecer na tela.
-    const itemExiste = await this.prisma.sessaoItem.findFirst({
-      where: { sessaoId, idProduto, controle: controleNorm },
-      select: { id: true },
+    // O pedido pode não trazer o lote pré-definido (linha chega com controle
+    // em branco = "lote livre"): o operador informa o lote que tem em mãos e
+    // ele é aceito. Só bloqueia produto fora do pedido, ou lote divergente
+    // quando o pedido já especifica um lote fixo para aquele item.
+    const itensDoProduto = await this.prisma.sessaoItem.findMany({
+      where: { sessaoId, idProduto },
+      select: { controle: true },
     });
-    if (!itemExiste) {
+    if (!itensDoProduto.length) {
+      throw new BadRequestException(`Produto ${idProduto} não faz parte deste pedido.`);
+    }
+    const temLoteLivre = itensDoProduto.some((i) => i.controle === ' ');
+    const bateComLoteFixo = itensDoProduto.some((i) => i.controle === controleNorm);
+    if (!temLoteLivre && !bateComLoteFixo) {
       throw new BadRequestException(
-        controleNorm === ' '
-          ? `Produto ${idProduto} não faz parte deste pedido.`
-          : `Produto ${idProduto} com lote/controle "${controleNorm}" não confere com o pedido.`,
+        `Produto ${idProduto} com lote/controle "${controleNorm}" não confere com o pedido.`,
       );
     }
 
@@ -590,30 +595,39 @@ export class SessaoService {
     const controleNorm = controle?.trim() || ' ';
 
     await this.prisma.sessaoLeitura.deleteMany({ where: { sessaoId, idProduto, controle: controleNorm } });
-    await this.prisma.sessaoItem.updateMany({
-      where: { sessaoId, idProduto, controle: controleNorm },
-      data: { qtdConferidaLocal: 0 },
-    });
+    // Recalcula (em vez de zerar) — item de lote livre pode ter leituras de
+    // outros lotes reais ainda restando, que não devem ser perdidas aqui.
+    await this.recalcularQtdItem(sessaoId, idProduto, controleNorm);
 
     await this.limparVolumesVazios(sessaoId);
   }
 
   private async recalcularQtdItem(sessaoId: string, idProduto: number, controle: string) {
-    const agg = await this.prisma.sessaoLeitura.aggregate({
+    // Lote fixo (linha do pedido já tem esse controle): soma só as leituras
+    // desse lote exato. Lote livre (linha do pedido está em branco): o
+    // operador pode ter usado lotes reais distintos entre leituras — soma
+    // tudo que foi lido para o produto, não só o lote da leitura atual.
+    const itemExato = await this.prisma.sessaoItem.findFirst({
       where: { sessaoId, idProduto, controle },
+      select: { id: true },
+    });
+    const somaPorProdutoInteiro = !itemExato && controle !== ' ';
+
+    const agg = await this.prisma.sessaoLeitura.aggregate({
+      where: somaPorProdutoInteiro ? { sessaoId, idProduto } : { sessaoId, idProduto, controle },
       _sum: { qtd: true },
     });
     const totalLido = Number(agg._sum.qtd ?? 0);
 
     const items = await this.prisma.sessaoItem.findMany({
-      where: { sessaoId, idProduto, controle },
+      where: somaPorProdutoInteiro ? { sessaoId, idProduto, controle: ' ' } : { sessaoId, idProduto, controle },
       orderBy: { sequencia: 'asc' },
       select: { id: true, qtdNeg: true },
     });
 
     if (items.length <= 1) {
       await this.prisma.sessaoItem.updateMany({
-        where: { sessaoId, idProduto, controle },
+        where: { id: { in: items.map((i) => i.id) } },
         data: { qtdConferidaLocal: totalLido },
       });
       return;
