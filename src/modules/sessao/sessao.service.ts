@@ -522,9 +522,14 @@ export class SessaoService {
       where: { sessaoId, usaConfPeso: tipo === 'PESAVEL' },
       select: { qtdNeg: true, qtdConferidaSankhya: true, qtdConferidaLocal: true },
     });
-    return itens.filter(
-      (i) => Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5)) < Number(i.qtdNeg.toFixed(5)),
-    ).length;
+    // Pesável: peso varia por natureza do produto (perda de água, aparas etc.) —
+    // pesar menos que o nominal é esperado e não deve travar a finalização.
+    // Só conta como pendente quem nunca foi pesado (0). Não-pesável mantém a
+    // exigência de bater com a quantidade negociada.
+    return itens.filter((i) => {
+      const conferido = Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5));
+      return tipo === 'PESAVEL' ? conferido === 0 : conferido < Number(i.qtdNeg.toFixed(5));
+    }).length;
   }
 
   async concluirEtapa(sessaoId: string, tipo: 'PESAVEL' | 'NAO_PESAVEL', idUsuario: number) {
