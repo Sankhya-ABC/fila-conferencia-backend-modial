@@ -8,6 +8,7 @@ import {
   FilaConferenciaFilter,
   IniciarConferenciaBody,
   ConcluirEtapaBody,
+  FinalizarConferenciaBody,
 } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 
@@ -46,7 +47,7 @@ export class ConferenciaController {
   }
 
   @Post('finalizar-conferencia')
-  postFinalizarConferencia(@Body() body: NumeroConferenciaFilter, @Req() req: any) {
+  postFinalizarConferencia(@Body() body: FinalizarConferenciaBody, @Req() req: any) {
     return this.service.postFinalizarConferencia(body, req.user.idUsuario);
   }
 

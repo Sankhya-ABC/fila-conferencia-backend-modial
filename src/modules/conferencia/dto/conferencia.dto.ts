@@ -1,5 +1,5 @@
 import { ApiPropertyOptional, IntersectionType } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
   IdUsuarioFilter,
@@ -89,4 +89,14 @@ export class FaturarNotaDto {
 
 export class ConcluirEtapaBody extends NumeroConferenciaFilter {
   @IsString() tipo: 'PESAVEL' | 'NAO_PESAVEL';
+}
+
+export class FinalizarConferenciaBody extends NumeroConferenciaFilter {
+  // true = finaliza mantendo os itens não conferidos como pendentes no pedido
+  // (sem cortar). false/ausente = comportamento atual: corta o que não foi
+  // conferido (ConferenciaSP.cortar).
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  manterPendente?: boolean;
 }

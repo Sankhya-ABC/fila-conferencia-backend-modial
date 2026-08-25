@@ -3,7 +3,7 @@ import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-reco
 import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
 import { GatewayClient } from 'src/http-client/gateway/gateway.client';
 import { ConferenciaHelper } from './conferencia.helper';
-import { FilaConferenciaFilter, IniciarConferenciaBody, ConcluirEtapaBody } from './dto/conferencia.dto';
+import { FilaConferenciaFilter, IniciarConferenciaBody, ConcluirEtapaBody, FinalizarConferenciaBody } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import { SessaoService } from '../sessao/sessao.service';
 import { PrismaService } from 'prisma/prisma.service';
@@ -707,19 +707,23 @@ export class ConferenciaService implements OnApplicationBootstrap {
     this.filaCache.clear();
   }
 
-  async postFinalizarConferencia({ numeroConferencia }: NumeroConferenciaFilter, idUsuarioFinalizacao?: number) {
+  async postFinalizarConferencia({ numeroConferencia, manterPendente }: FinalizarConferenciaBody, idUsuarioFinalizacao?: number) {
     this.filaCache.clear(); // nota finalizada — invalida cache da fila
     const slug = tenantStorage.getStore()!;
     const temAdCubagem = await this.tenantService.hasModulo(slug, 'AD_CUBAGEM');
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
 
-    const { ok, pendentes } = await this.sessaoService.todasEtapasConcluidas(sessao.id);
-    if (!ok) {
-      const nomes = pendentes.map((p) => (p === 'PESAVEL' ? 'pesável' : 'não pesável'));
-      throw new BadRequestException(
-        `Conferência ainda não pode ser finalizada: etapa(s) ${nomes.join(' e ')} pendente(s) de conclusão.`,
-      );
+    // manterPendente = usuário escolheu finalizar mesmo com itens não conferidos
+    // (modal de divergência) — não faz sentido barrar por etapa pendente aqui.
+    if (!manterPendente) {
+      const { ok, pendentes } = await this.sessaoService.todasEtapasConcluidas(sessao.id);
+      if (!ok) {
+        const nomes = pendentes.map((p) => (p === 'PESAVEL' ? 'pesável' : 'não pesável'));
+        throw new BadRequestException(
+          `Conferência ainda não pode ser finalizada: etapa(s) ${nomes.join(' e ')} pendente(s) de conclusão.`,
+        );
+      }
     }
 
     const dados = await this.sessaoService.getDadosFinalizacao(sessao.id);
@@ -859,12 +863,15 @@ export class ConferenciaService implements OnApplicationBootstrap {
         throw new BadRequestException(`Finalização concluída com erros nos seguintes registros: ${erros.join(', ')}. Os dados locais foram preservados para nova tentativa.`);
       }
 
-      // Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF
-      await this.chamarConferenciaSP('ConferenciaSP.cortar', {
-        nuNota: sessao.numeroUnico,
-        peso: pesoBrutoTotal,
-        qtdVol: totalVol,
-      });
+      // Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF.
+      // manterPendente: pula o corte — item não conferido fica pendente no pedido pra entrega futura.
+      if (!manterPendente) {
+        await this.chamarConferenciaSP('ConferenciaSP.cortar', {
+          nuNota: sessao.numeroUnico,
+          peso: pesoBrutoTotal,
+          qtdVol: totalVol,
+        });
+      }
       await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
         nuConf: String(numeroConferencia),
         peso: pesoBrutoTotal,
@@ -1044,13 +1051,16 @@ export class ConferenciaService implements OnApplicationBootstrap {
       );
     }
 
-    // 3. Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF
+    // 3. Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF.
+    // manterPendente: pula o corte — item não conferido fica pendente no pedido pra entrega futura.
     const qtdVol = dados.volumes.length;
-    await this.chamarConferenciaSP('ConferenciaSP.cortar', {
-      nuNota: sessao.numeroUnico,
-      peso: pesoBrutoTotal,
-      qtdVol,
-    });
+    if (!manterPendente) {
+      await this.chamarConferenciaSP('ConferenciaSP.cortar', {
+        nuNota: sessao.numeroUnico,
+        peso: pesoBrutoTotal,
+        qtdVol,
+      });
+    }
     await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
       nuConf: String(numeroConferencia),
       peso: pesoBrutoTotal,
