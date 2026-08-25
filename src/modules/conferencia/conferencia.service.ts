@@ -676,15 +676,19 @@ export class ConferenciaService implements OnApplicationBootstrap {
     return this.sessaoService.getEtapas(sessao.id);
   }
 
-  async postConcluirEtapa({ numeroConferencia, tipo }: ConcluirEtapaBody, idUsuario: number) {
+  async postConcluirEtapa({ numeroConferencia, tipo, manterPendente }: ConcluirEtapaBody, idUsuario: number) {
     const sessao = await this.sessaoService.buscarPorConferencia(numeroConferencia);
     if (!sessao) throw new BadRequestException('Sessão de conferência não encontrada.');
 
-    const pendentes = await this.sessaoService.contarPendentesPorTipo(sessao.id, tipo);
-    if (pendentes > 0) {
-      throw new BadRequestException(
-        `Ainda há ${pendentes} item(ns) ${tipo === 'PESAVEL' ? 'pesável(is)' : 'não pesável(is)'} pendente(s) de conferência.`,
-      );
+    // manterPendente = operador escolheu no modal de divergência seguir mesmo
+    // com item pendente nessa categoria (corte ou pendência tratados no finalize).
+    if (!manterPendente) {
+      const pendentes = await this.sessaoService.contarPendentesPorTipo(sessao.id, tipo);
+      if (pendentes > 0) {
+        throw new BadRequestException(
+          `Ainda há ${pendentes} item(ns) ${tipo === 'PESAVEL' ? 'pesável(is)' : 'não pesável(is)'} pendente(s) de conferência.`,
+        );
+      }
     }
 
     await this.sessaoService.concluirEtapa(sessao.id, tipo, idUsuario);

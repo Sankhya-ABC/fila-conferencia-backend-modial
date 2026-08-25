@@ -89,6 +89,12 @@ export class FaturarNotaDto {
 
 export class ConcluirEtapaBody extends NumeroConferenciaFilter {
   @IsString() tipo: 'PESAVEL' | 'NAO_PESAVEL';
+
+  // true = conclui mesmo com item pendente nessa categoria (divergência assumida)
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  manterPendente?: boolean;
 }
 
 export class FinalizarConferenciaBody extends NumeroConferenciaFilter {
