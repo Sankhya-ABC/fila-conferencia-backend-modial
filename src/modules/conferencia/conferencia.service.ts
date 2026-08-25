@@ -205,6 +205,10 @@ export class ConferenciaService implements OnApplicationBootstrap {
       expressions.push('AD_NUMTALAO = ?');
       parameters.push({ value: queryParams.numeroModial, type: 'S' });
     }
+    if (queryParams.ordemCarga) {
+      expressions.push('ORDEMCARGA = ?');
+      parameters.push({ value: Number(queryParams.ordemCarga), type: 'I' });
+    }
     if (queryParams.dataInicio) {
       expressions.push('DTNEG >= ?');
       parameters.push({ value: queryParams.dataInicio, type: 'D' });
@@ -220,7 +224,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       temNumtalao ? 'AD_NUMTALAO' : null,
       temTipoentrega ? 'AD_TIPOENTREGA' : null,
     ].filter(Boolean).join(',');
-    const fieldsetFila = `NUNOTA,NUMNOTA,NUCONFATUAL,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG${camposAdFila ? ',' + camposAdFila : ''},CODVEND`;
+    const fieldsetFila = `NUNOTA,NUMNOTA,NUCONFATUAL,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,ORDEMCARGA${camposAdFila ? ',' + camposAdFila : ''},CODVEND`;
 
     const [raw, activeNums] = await Promise.all([
       this.loadRecordsClient.loadRecords({
@@ -314,6 +318,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         AD_NUMTALAO: r.AD_NUMTALAO ?? null,
         AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
         apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
+        ordemCarga: r.ORDEMCARGA ? Number(r.ORDEMCARGA) : null,
       };
     });
 
@@ -352,11 +357,12 @@ export class ConferenciaService implements OnApplicationBootstrap {
             if (queryParams.idParceiro)   { finExpressions.push('CODPARC = ?');    finParams.push({ value: Number(queryParams.idParceiro), type: 'I' }); }
             if (queryParams.idEmpresa)    { finExpressions.push('CODEMP = ?');     finParams.push({ value: Number(queryParams.idEmpresa), type: 'I' }); }
             if (queryParams.numeroModial && temNumtalao) { finExpressions.push('AD_NUMTALAO = ?'); finParams.push({ value: queryParams.numeroModial, type: 'S' }); }
+            if (queryParams.ordemCarga) { finExpressions.push('ORDEMCARGA = ?'); finParams.push({ value: Number(queryParams.ordemCarga), type: 'I' }); }
 
             const camposAdFin = [temNumtalao ? 'AD_NUMTALAO' : null, temTipoentrega ? 'AD_TIPOENTREGA' : null].filter(Boolean).join(',');
             const rawFin = await this.loadRecordsClient.loadRecords({
               rootEntity: 'CabecalhoNota',
-              fieldset: `NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG${camposAdFin ? ',' + camposAdFin : ''},CODVEND`,
+              fieldset: `NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,ORDEMCARGA${camposAdFin ? ',' + camposAdFin : ''},CODVEND`,
               criteria: {
                 expression: finExpressions.join(' AND '),
                 parameters: finParams.length ? finParams : undefined,
@@ -387,6 +393,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
                 AD_NUMTALAO: r.AD_NUMTALAO ?? null,
                 AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
                 apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
+                ordemCarga: r.ORDEMCARGA ? Number(r.ORDEMCARGA) : null,
               }));
               data = [...data, ...finData];
             }
@@ -445,11 +452,12 @@ export class ConferenciaService implements OnApplicationBootstrap {
       if (queryParams.idParceiro)   { finExpressions.push('CODPARC = ?');    finParams.push({ value: Number(queryParams.idParceiro), type: 'I' }); }
       if (queryParams.idEmpresa)    { finExpressions.push('CODEMP = ?');     finParams.push({ value: Number(queryParams.idEmpresa), type: 'I' }); }
       if (queryParams.numeroModial && temNumtalao) { finExpressions.push('AD_NUMTALAO = ?'); finParams.push({ value: queryParams.numeroModial, type: 'S' }); }
+      if (queryParams.ordemCarga) { finExpressions.push('ORDEMCARGA = ?'); finParams.push({ value: Number(queryParams.ordemCarga), type: 'I' }); }
 
       const camposAd = [temNumtalao ? 'AD_NUMTALAO' : null, temTipoentrega ? 'AD_TIPOENTREGA' : null].filter(Boolean).join(',');
       const rawFin = await this.loadRecordsClient.loadRecords({
         rootEntity: 'CabecalhoNota',
-        fieldset: `NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG${camposAd ? ',' + camposAd : ''},CODVEND`,
+        fieldset: `NUNOTA,NUMNOTA,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,ORDEMCARGA${camposAd ? ',' + camposAd : ''},CODVEND`,
         criteria: {
           expression: finExpressions.join(' AND '),
           parameters: finParams.length ? finParams : undefined,
@@ -481,6 +489,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         AD_NUMTALAO: r.AD_NUMTALAO ?? null,
         AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
         apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
+        ordemCarga: r.ORDEMCARGA ? Number(r.ORDEMCARGA) : null,
       }));
 
       data = await this._anexarEtapas(data);

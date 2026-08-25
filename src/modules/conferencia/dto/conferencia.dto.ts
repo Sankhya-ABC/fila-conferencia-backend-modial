@@ -63,6 +63,11 @@ export class FilaConferenciaFilter extends PaginationFilter {
   @IsString()
   @IsOptional()
   codigoTipoEntrega?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  ordemCarga?: string;
 }
 
 export class IniciarConferenciaBody extends IntersectionType(
