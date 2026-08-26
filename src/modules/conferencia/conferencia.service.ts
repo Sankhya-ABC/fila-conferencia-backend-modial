@@ -742,6 +742,14 @@ export class ConferenciaService implements OnApplicationBootstrap {
     const dados = await this.sessaoService.getDadosFinalizacao(sessao.id);
     if (!dados) throw new BadRequestException('Dados da sessão não encontrados.');
 
+    // Corte só faz sentido havendo divergência de fato (falta ou excesso frente
+    // ao pedido) — não basta "manterPendente=false", que é o valor padrão até
+    // numa conferência 100% batida. Sem isso o corte rodava em toda conferência.
+    const houveDivergencia = dados.itens.some((i) => {
+      const conferido = Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5));
+      return conferido !== Number(i.qtdNeg.toFixed(5));
+    });
+
     const usuarioDb = await this.prisma.user.findFirst({ where: { codigo: sessao.idUsuario } });
     const nomeUsuario = usuarioDb?.nome ?? String(sessao.idUsuario);
 
@@ -878,7 +886,8 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
       // Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF.
       // manterPendente: pula o corte — item não conferido fica pendente no pedido pra entrega futura.
-      if (!manterPendente) {
+      // Sem divergência real (bateu tudo), o corte é pulado mesmo com manterPendente=false.
+      if (!manterPendente && houveDivergencia) {
         await this.chamarConferenciaSP('ConferenciaSP.cortar', {
           nuNota: sessao.numeroUnico,
           peso: pesoBrutoTotal,
@@ -1066,8 +1075,9 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
     // 3. Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF.
     // manterPendente: pula o corte — item não conferido fica pendente no pedido pra entrega futura.
+    // Sem divergência real (bateu tudo), o corte é pulado mesmo com manterPendente=false.
     const qtdVol = dados.volumes.length;
-    if (!manterPendente) {
+    if (!manterPendente && houveDivergencia) {
       await this.chamarConferenciaSP('ConferenciaSP.cortar', {
         nuNota: sessao.numeroUnico,
         peso: pesoBrutoTotal,

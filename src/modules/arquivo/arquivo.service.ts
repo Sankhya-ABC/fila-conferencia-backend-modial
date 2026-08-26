@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import * as bwipjs from 'bwip-js';
 import * as fs from 'fs';
 import * as Handlebars from 'handlebars';
 import * as path from 'path';
@@ -100,6 +101,20 @@ export class ArquivoService {
     return Buffer.from(pdfUint8);
   }
 
+  private async gerarCodigoBarrasBase64(codigo: string | number): Promise<string> {
+    const png = await bwipjs.toBuffer({
+      bcid: 'code128',
+      text: String(codigo),
+      scale: 3,
+      height: 10,
+      includetext: true,
+      textxalign: 'center',
+      textfont: 'Helvetica',
+      textsize: 8,
+    });
+    return `data:image/png;base64,${png.toString('base64')}`;
+  }
+
   async downloadMapaSeparacao(
     numeroUnico: number,
     tipo: 'PESAVEL' | 'NAO_PESAVEL',
@@ -114,8 +129,16 @@ export class ArquivoService {
     const html = fs.readFileSync(filePath, 'utf-8');
     const template = Handlebars.compile(html);
 
+    const itens = await Promise.all(
+      dados.itens.map(async (item) => ({
+        ...item,
+        codigoBarrasBase64: await this.gerarCodigoBarrasBase64(item.idProduto),
+      })),
+    );
+
     const finalHtml = template({
       ...dados,
+      itens,
       tipoLabel: tipo === 'PESAVEL' ? 'Pesável' : 'Não Pesável',
       totalItens: dados.itens.length,
       printDateTime: formatarDataHoraBR(),
