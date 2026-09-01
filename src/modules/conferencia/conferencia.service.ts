@@ -409,14 +409,24 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
   // Anexa o checklist de etapas (pesável/não-pesável) a cada nota — só para tenants
   // com o módulo de conferência parcial habilitado. Uma única query em lote.
-  private async _anexarEtapas<T extends { numeroUnico: number }>(data: T[]): Promise<(T & { etapas?: { tipo: string; status: string; idUsuarioConclusao: number | null }[] })[]> {
+  private async _anexarEtapas<T extends { numeroUnico: number; numeroConferencia: number | null }>(data: T[]): Promise<(T & { etapas?: { tipo: string; status: string; idUsuarioConclusao: number | null }[] })[]> {
     const slug = tenantStorage.getStore();
     if (!slug) return data;
     const temConferenciaParcial = await this.tenantService.hasModulo(slug, 'CONFERENCIA_PARCIAL');
     if (!temConferenciaParcial) return data;
 
     const mapa = await this.sessaoService.listarEtapasPorNumerosUnicos(data.map((d) => d.numeroUnico));
-    return data.map((d) => ({ ...d, etapas: mapa.get(d.numeroUnico) }));
+    return data.map((d) => {
+      const sessaoLocal = mapa.get(d.numeroUnico);
+      // Sessão local só é válida se ainda for a conferência ativa no Sankhya
+      // (NUCONFATUAL). Excluir a conferência direto no Sankhya não limpa a
+      // sessão/etapas locais — sem essa checagem, a nota volta pra fila
+      // mostrando o checklist já marcado de uma tentativa anterior.
+      const etapas = sessaoLocal && sessaoLocal.numeroConferencia === d.numeroConferencia
+        ? sessaoLocal.etapas
+        : undefined;
+      return { ...d, etapas };
+    });
   }
 
   // Extração do path F-only para manter getFilaConferencias legível.

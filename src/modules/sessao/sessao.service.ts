@@ -508,13 +508,13 @@ export class SessaoService {
   // evitando N chamadas /conferencias/etapas (uma por nota visível na página).
   // idUsuarioConclusao é incluído para o front distinguir "concluída por alguém"
   // de "auto-concluída por não existir item daquele tipo neste pedido" (ver criarSessao).
-  async listarEtapasPorNumerosUnicos(numerosUnicos: number[]): Promise<Map<number, { tipo: string; status: string; idUsuarioConclusao: number | null }[]>> {
+  async listarEtapasPorNumerosUnicos(numerosUnicos: number[]): Promise<Map<number, { numeroConferencia: number; etapas: { tipo: string; status: string; idUsuarioConclusao: number | null }[] }>> {
     if (!numerosUnicos.length) return new Map();
     const sessoes = await this.prisma.sessaoConferencia.findMany({
       where: { numeroUnico: { in: numerosUnicos } },
-      select: { numeroUnico: true, etapas: { select: { tipo: true, status: true, idUsuarioConclusao: true } } },
+      select: { numeroUnico: true, numeroConferencia: true, etapas: { select: { tipo: true, status: true, idUsuarioConclusao: true } } },
     });
-    return new Map(sessoes.map((s) => [s.numeroUnico, s.etapas]));
+    return new Map(sessoes.map((s) => [s.numeroUnico, { numeroConferencia: s.numeroConferencia, etapas: s.etapas }]));
   }
 
   async contarPendentesPorTipo(sessaoId: string, tipo: 'PESAVEL' | 'NAO_PESAVEL'): Promise<number> {
