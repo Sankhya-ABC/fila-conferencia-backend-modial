@@ -755,10 +755,25 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // Corte só faz sentido havendo divergência de fato (falta ou excesso frente
     // ao pedido) — não basta "manterPendente=false", que é o valor padrão até
     // numa conferência 100% batida. Sem isso o corte rodava em toda conferência.
-    const houveDivergencia = dados.itens.some((i) => {
+    //
+    // Pesável nunca conta como divergência (peso variar do nominal, pra mais
+    // ou pra menos, é esperado) — o corte dele roda sempre que necessário,
+    // automático e silencioso, sem depender de manterPendente nem virar
+    // pop-up pro usuário. Divergência "de verdade" (que barra, avisa e só
+    // corta se o usuário confirmar) é exclusiva do não pesável.
+    const houveDivergenciaPesavel = dados.itens.some((i) => {
+      if (!i.usaConfPeso) return false;
       const conferido = Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5));
       return conferido !== Number(i.qtdNeg.toFixed(5));
     });
+    const houveDivergencia = dados.itens.some((i) => {
+      if (i.usaConfPeso) return false;
+      const conferido = Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5));
+      return conferido !== Number(i.qtdNeg.toFixed(5));
+    });
+    // Corte roda se o não pesável divergiu e o usuário confirmou (!manterPendente),
+    // OU se o pesável divergiu — esse último sempre, incondicional.
+    const precisaCorte = houveDivergenciaPesavel || (!manterPendente && houveDivergencia);
 
     const usuarioDb = await this.prisma.user.findFirst({ where: { codigo: sessao.idUsuario } });
     const nomeUsuario = usuarioDb?.nome ?? String(sessao.idUsuario);
@@ -897,7 +912,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       // Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF.
       // manterPendente: pula o corte — item não conferido fica pendente no pedido pra entrega futura.
       // Sem divergência real (bateu tudo), o corte é pulado mesmo com manterPendente=false.
-      if (!manterPendente && houveDivergencia) {
+      if (precisaCorte) {
         await this.chamarConferenciaSP('ConferenciaSP.cortar', {
           nuNota: sessao.numeroUnico,
           peso: pesoBrutoTotal,
@@ -1087,7 +1102,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // manterPendente: pula o corte — item não conferido fica pendente no pedido pra entrega futura.
     // Sem divergência real (bateu tudo), o corte é pulado mesmo com manterPendente=false.
     const qtdVol = dados.volumes.length;
-    if (!manterPendente && houveDivergencia) {
+    if (precisaCorte) {
       await this.chamarConferenciaSP('ConferenciaSP.cortar', {
         nuNota: sessao.numeroUnico,
         peso: pesoBrutoTotal,
