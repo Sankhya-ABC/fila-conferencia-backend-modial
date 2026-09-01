@@ -425,6 +425,9 @@ export class ConferenciaService implements OnApplicationBootstrap {
       const etapas = sessaoLocal && sessaoLocal.numeroConferencia === d.numeroConferencia
         ? sessaoLocal.etapas
         : undefined;
+      if (sessaoLocal) {
+        this.logger.warn(`[DEBUG _anexarEtapas] numeroUnico=${d.numeroUnico} sessaoLocal.numeroConferencia=${sessaoLocal.numeroConferencia} (${typeof sessaoLocal.numeroConferencia}) d.numeroConferencia=${d.numeroConferencia} (${typeof d.numeroConferencia}) match=${sessaoLocal.numeroConferencia === d.numeroConferencia}`);
+      }
       return { ...d, etapas };
     });
   }
