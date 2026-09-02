@@ -13,6 +13,7 @@ import { tenantStorage } from '../../core/tenant/tenant.context';
 // própria marca impressa. Fora daqui, nenhum tenant mostra logo.
 const LOGO_POR_TENANT: Record<string, string> = {
   modial: 'modial-logo.png',
+  negri: 'negri-logo.jpg',
 };
 
 @Injectable()
@@ -53,8 +54,11 @@ export class ArquivoService {
 
     const slug = tenantStorage.getStore() ?? '';
     const logoArquivo = LOGO_POR_TENANT[slug];
+    const logoMime = logoArquivo?.endsWith('.jpg') || logoArquivo?.endsWith('.jpeg')
+      ? 'image/jpeg'
+      : 'image/png';
     const logoBase64 = logoArquivo
-      ? `data:image/png;base64,${fs
+      ? `data:${logoMime};base64,${fs
           .readFileSync(path.join(process.cwd(), 'src/templates', logoArquivo))
           .toString('base64')}`
       : null;
