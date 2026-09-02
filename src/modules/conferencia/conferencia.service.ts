@@ -866,6 +866,13 @@ export class ConferenciaService implements OnApplicationBootstrap {
     const requestBodyDivergencia = houveDivergenciaMantida
       ? { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA }
       : undefined;
+    // "Executar corte": o nativo também manda o mesmo clientEventList junto
+    // com ConferenciaSP.cortar quando há divergência real (não pesável) —
+    // confirmado num payload capturado do sistema nativo. Corte só por
+    // divergência de peso (silencioso, automático) não entra aqui.
+    const requestBodyDivergenciaCortar = houveDivergencia
+      ? { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA }
+      : undefined;
     // STATUS do TGFCON2 no Sankhya: 'D' = Finalizada divergente, 'F' = Finalizada OK
     // (ver DominioService.getStatus()). Antes ficava sempre 'F', mesmo com
     // divergência mantida — o clientEventList sozinho não muda o status da
@@ -1014,7 +1021,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
           nuNota: sessao.numeroUnico,
           peso: pesoBrutoTotal,
           qtdVol: totalVol,
-        });
+        }, requestBodyDivergenciaCortar);
       }
       await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
         nuConf: String(numeroConferencia),
@@ -1204,7 +1211,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         nuNota: sessao.numeroUnico,
         peso: pesoBrutoTotal,
         qtdVol,
-      });
+      }, requestBodyDivergenciaCortar);
     }
     await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
       nuConf: String(numeroConferencia),
