@@ -547,6 +547,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
     let qtdAmaior: string | null        = 'C';
     let fataoConcluir: string | null    = 'N';
     let exibirProd: string | null       = null;
+    let exibirImgProd: string | null    = null;
     if (nucco != null) {
       const ccoRaw = await this.loadRecordsClient.loadRecords({
         rootEntity: 'ConfiguracaoConferencia',
@@ -561,6 +562,22 @@ export class ConferenciaService implements OnApplicationBootstrap {
         qtdAmaior        = (ccoRows[0]?.QTDAMAIOR         as string | null) ?? 'C';
         fataoConcluir    = (ccoRows[0]?.FATAOCONCLUIR     as string | null) ?? 'N';
         exibirProd       = (ccoRows[0]?.EXIBIRPROD        as string | null) ?? null;
+      }
+
+      // Consulta isolada: EXIBIRIMGPROD é campo novo, ainda não confirmado no
+      // dicionário de dados de todos os tenants. Se a coluna não existir na
+      // base do tenant, o loadRecords rejeita a query inteira — isolando aqui,
+      // um tenant sem o campo perde só a imagem (default oculto), sem
+      // derrubar os outros parâmetros de ConfiguracaoConferencia acima.
+      const imgProdRaw = await this.loadRecordsClient.loadRecords({
+        rootEntity: 'ConfiguracaoConferencia',
+        fieldset: 'EXIBIRIMGPROD',
+        criteria: { expression: 'NUCCO = ?', parameters: [{ value: Number(nucco), type: 'I' }] },
+        limit: 1,
+      }).catch(() => null);
+      if (imgProdRaw) {
+        const imgProdRows = this.loadRecordsClient.parseEntities(imgProdRaw);
+        exibirImgProd = (imgProdRows[0]?.EXIBIRIMGPROD as string | null) ?? null;
       }
     }
 
@@ -580,6 +597,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       qtdAmaior,
       fataoConcluir,
       exibirProd,
+      exibirImgProd,
       temCubagem,
       idParceiro: Number(r.CODPARC),
       nomeParceiro: r['Parceiro_RAZAOSOCIAL'] ?? null,
