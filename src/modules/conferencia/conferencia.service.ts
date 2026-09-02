@@ -78,7 +78,8 @@ export class ConferenciaService implements OnApplicationBootstrap {
     }).catch(() => null);
     if (!raw) return null;
     const rows = this.loadRecordsClient.parseEntities(raw);
-    return rows[0]?.STATUS ?? null;
+    const status = rows[0]?.STATUS;
+    return status != null ? String(status).trim() : null;
   }
 
   private async chamarConferenciaSP(
@@ -312,7 +313,10 @@ export class ConferenciaService implements OnApplicationBootstrap {
           }).then((rawConf) => {
             const map = new Map<number, string>();
             for (const c of this.loadRecordsClient.parseEntities(rawConf)) {
-              map.set(Number(c.NUCONF), c.STATUS);
+              // STATUS é CHAR fixo no Sankhya (Oracle, no caso da Negri) — vem
+              // com espaço de padding à direita (ex.: "R "), o que quebra
+              // qualquer comparação exata (=== 'R') mais adiante.
+              map.set(Number(c.NUCONF), String(c.STATUS ?? '').trim());
             }
             return map;
           }).catch(() => new Map<number, string>())
