@@ -65,17 +65,40 @@ export class ConferenciaService implements OnApplicationBootstrap {
     }
   }
 
-  private async chamarConferenciaSP(serviceName: string, params: Record<string, any>): Promise<void> {
+  private async chamarConferenciaSP(
+    serviceName: string,
+    params: Record<string, any>,
+    requestBodyExtra?: Record<string, any>,
+  ): Promise<void> {
     const path = `/mgecom/service.sbr?serviceName=${serviceName}&outputType=json`;
     const res = await this.gateway.client.post(path, {
       serviceName,
-      requestBody: { params },
+      requestBody: { params, ...requestBodyExtra },
     });
     if (res.data?.status !== '1') {
       const msg = res.data?.statusMessage ?? `Falha em ${serviceName}`;
       throw new BadRequestException(msg);
     }
   }
+
+  // Lista fixa de client events que o app nativo do Sankhya manda junto com
+  // ConferenciaSP.finalizarConferencia quando a conferência fecha com
+  // divergência (capturada do sistema nativo — payload completo, sem nenhum
+  // dado de produto anexado a cada event; a lista de divergentes o Sankhya já
+  // deriva server-side comparando TGFITE.QTDCONFERIDA x QTDNEG, que este
+  // backend já grava via DetalhesConferencia/ItemNota antes desta chamada).
+  private static readonly CLIENT_EVENTS_DIVERGENCIA = {
+    clientEvent: [
+      { $: 'conferencia.lista.produtos.divergentes' },
+      { $: 'client.event.escolha.etiqueta.peso' },
+      { $: 'fila.conferencia.client.event.produtos.divergentes' },
+      { $: 'client.event.produtos.escolha.unidade.mov.armazenamento' },
+      { $: 'client.event.escolha.empresa.local.destino' },
+      { $: 'client.event.produtos.excluidos.conferencia' },
+      { $: 'client.event.volumes.produto.recontado' },
+      { $: 'br.com.sankhya.mgecom.busca.identificador.produto' },
+    ],
+  };
 
   // ─── Cache stale-while-revalidate ─────────────────────────────────────────
   private readonly filaCache = new Map<string, {
@@ -793,6 +816,14 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // OU se o pesável divergiu — esse último sempre, incondicional.
     const precisaCorte = houveDivergenciaPesavel || (!manterPendente && houveDivergencia);
 
+    // "Finalizar divergente": usuário optou por manter a diferença registrada
+    // em vez de cortar (manterPendente=true) e há divergência real (não
+    // pesável) — é o único caso que manda o clientEventList pro Sankhya.
+    // Sem divergência (conferência normal) ou com corte, nada muda aqui.
+    const requestBodyDivergencia = (houveDivergencia && manterPendente)
+      ? { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA }
+      : undefined;
+
     const usuarioDb = await this.prisma.user.findFirst({ where: { codigo: sessao.idUsuario } });
     const nomeUsuario = usuarioDb?.nome ?? String(sessao.idUsuario);
 
@@ -941,7 +972,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         nuConf: String(numeroConferencia),
         peso: pesoBrutoTotal,
         qtdVol: totalVol,
-      }).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
+      }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
 
       // STATUS='F' — garante o fechamento local mesmo se finalizarConferencia não o fizer
       const finSimp: Record<string, any> = { STATUS: 'F', DHFINCONF: dh };
@@ -1131,7 +1162,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       nuConf: String(numeroConferencia),
       peso: pesoBrutoTotal,
       qtdVol,
-    }).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
+    }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
 
     // STATUS='F' — garante o fechamento local mesmo se finalizarConferencia não o fizer
     const finDet: Record<string, any> = { STATUS: 'F', DHFINCONF: dh };
