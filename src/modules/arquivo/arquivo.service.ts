@@ -7,6 +7,13 @@ import * as puppeteer from 'puppeteer';
 import { NumeroConferenciaFilter } from '../dto/model';
 import { ArquivoHelper } from './arquivo.helper';
 import { formatarDataHoraBR } from '../../core/utils/data-hora.util';
+import { tenantStorage } from '../../core/tenant/tenant.context';
+
+// Logo por tenant na etiqueta de volume — cada cliente pode ter (ou não) sua
+// própria marca impressa. Fora daqui, nenhum tenant mostra logo.
+const LOGO_POR_TENANT: Record<string, string> = {
+  modial: 'modial-logo.png',
+};
 
 @Injectable()
 export class ArquivoService {
@@ -44,11 +51,13 @@ export class ArquivoService {
 
     const template = Handlebars.compile(html);
 
-    const logoPath = path.join(process.cwd(), 'src/templates/modial-logo.png');
-
-    const logoBase64 = `data:image/png;base64,${fs
-      .readFileSync(logoPath)
-      .toString('base64')}`;
+    const slug = tenantStorage.getStore() ?? '';
+    const logoArquivo = LOGO_POR_TENANT[slug];
+    const logoBase64 = logoArquivo
+      ? `data:image/png;base64,${fs
+          .readFileSync(path.join(process.cwd(), 'src/templates', logoArquivo))
+          .toString('base64')}`
+      : null;
 
     const totalVolumes = rows.length;
     const totalVol = String(totalVolumes).padStart(2, '0');
