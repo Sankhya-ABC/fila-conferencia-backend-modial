@@ -133,7 +133,6 @@ export class ConferenciaService implements OnApplicationBootstrap {
   }
 
   private readonly CLIENT_EVENT_CONFIRM = { clientEventList: { clientEvent: [{ $: 'br.com.sankhya.actionbutton.clientconfirm' }] } };
-  private liberadorCodUsuCache: number | null = null;
 
   // Busca no Sankhya os itens de liberação de limite ainda pendentes
   // (não liberados nem reprovados) pra essa conferência, na tabela de
@@ -155,21 +154,6 @@ export class ConferenciaService implements OnApplicationBootstrap {
     return this.loadRecordsClient.parseEntities(raw);
   }
 
-  private async resolverCodUsuLiberador(nomeUsu: string): Promise<number | null> {
-    if (this.liberadorCodUsuCache != null) return this.liberadorCodUsuCache;
-    const raw = await this.loadRecordsClient.loadRecords({
-      rootEntity: 'Usuario',
-      fieldset: 'CODUSU',
-      criteria: { expression: 'NOMEUSU = ?', parameters: [{ value: nomeUsu, type: 'S' }] },
-      limit: 1,
-    }).catch(() => null);
-    if (!raw) return null;
-    const rows = this.loadRecordsClient.parseEntities(raw);
-    const codusu = rows[0]?.CODUSU;
-    this.liberadorCodUsuCache = codusu != null ? Number(codusu) : null;
-    return this.liberadorCodUsuCache;
-  }
-
   // Aprova automaticamente, com um usuário liberador dedicado (credenciais
   // via env LIBERADOR_USUARIO/LIBERADOR_SENHA), a liberação de corte pendente
   // — só usado quando a divergência é 100% de peso (pesável), nunca quando há
@@ -185,20 +169,25 @@ export class ConferenciaService implements OnApplicationBootstrap {
     }
 
     try {
-      await this.chamarConferenciaSP('LiberacaoLimitesSP.validarSenhaUsuario', {
+      // LiberacaoLimitesSP vive no módulo /mge/ (genérico), não /mgecom/
+      // (comercial) — confirmado por teste direto: /mgecom/ dava "nenhum
+      // provedor encontrado" pros dois métodos, /mge/ funciona nos dois.
+      const authRes = await this.chamarConferenciaSP('LiberacaoLimitesSP.validarSenhaUsuario', {
         nomeUsu: usuarioLib,
         senhaUsu: senhaLib,
-      }, this.CLIENT_EVENT_CONFIRM);
+      }, this.CLIENT_EVENT_CONFIRM, 'mge');
+
+      // validarSenhaUsuario já retorna o CODUSU do liberador — não precisa
+      // de consulta extra.
+      const codusu = authRes?.responseBody?.codUsu != null ? Number(authRes.responseBody.codUsu) : null;
+      if (codusu == null) {
+        this.logger.warn('[autoLiberarCortePesavel] validarSenhaUsuario não retornou codUsu — deixando aguardando liberação manual.');
+        return false;
+      }
 
       const pendentes = await this.buscarLiberacoesPendentes(numeroConferencia);
       if (!pendentes.length) {
         this.logger.warn(`[autoLiberarCortePesavel] nenhuma liberação pendente encontrada pra NUCONF=${numeroConferencia}`);
-        return false;
-      }
-
-      const codusu = await this.resolverCodUsuLiberador(usuarioLib);
-      if (codusu == null) {
-        this.logger.warn(`[autoLiberarCortePesavel] não achou CODUSU pro usuário liberador '${usuarioLib}'`);
         return false;
       }
 
@@ -216,7 +205,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
           liberar: 'S',
           obsLib: 'Liberação automática — corte silencioso por divergência de peso (regra de negócio)',
           vlrLib: 1,
-        }, this.CLIENT_EVENT_CONFIRM);
+        }, this.CLIENT_EVENT_CONFIRM, 'mge');
       }
 
       return true;
@@ -230,8 +219,9 @@ export class ConferenciaService implements OnApplicationBootstrap {
     serviceName: string,
     params: Record<string, any>,
     requestBodyExtra?: Record<string, any>,
-  ): Promise<void> {
-    const path = `/mgecom/service.sbr?serviceName=${serviceName}&outputType=json`;
+    modulo: 'mgecom' | 'mge' = 'mgecom',
+  ): Promise<any> {
+    const path = `/${modulo}/service.sbr?serviceName=${serviceName}&outputType=json`;
     const res = await this.gateway.client.post(path, {
       serviceName,
       requestBody: { params, ...requestBodyExtra },
@@ -240,6 +230,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       const msg = res.data?.statusMessage ?? `Falha em ${serviceName}`;
       throw new BadRequestException(msg);
     }
+    return res.data;
   }
 
   // Lista fixa de client events que o app nativo do Sankhya manda junto com
