@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-records.client';
 import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
 import { GatewayClient } from 'src/http-client/gateway/gateway.client';
@@ -38,6 +39,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
     private readonly prisma: PrismaService,
     private readonly tenantService: TenantService,
     private readonly inflight: InflightService,
+    private readonly config: ConfigService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -95,9 +97,10 @@ export class ConferenciaService implements OnApplicationBootstrap {
     peso: number;
     qtdVol: number;
     precisaCorte: boolean;
+    apenasDivergenciaPesavel: boolean;
     requestBodyDivergencia: Record<string, any>;
   }): Promise<void> {
-    const { numeroConferencia, nuNota, peso, qtdVol, precisaCorte, requestBodyDivergencia } = params;
+    const { numeroConferencia, nuNota, peso, qtdVol, precisaCorte, apenasDivergenciaPesavel, requestBodyDivergencia } = params;
 
     const finalizar = () =>
       this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
@@ -111,10 +114,115 @@ export class ConferenciaService implements OnApplicationBootstrap {
     if (precisaCorte) {
       await this.chamarConferenciaSP('ConferenciaSP.cortar', { nuNota, peso, qtdVol }, requestBodyDivergencia);
 
-      const statusPosCorte = await this.statusSankhyaDaConferencia(numeroConferencia);
+      let statusPosCorte = await this.statusSankhyaDaConferencia(numeroConferencia);
+
+      // Regra de negócio: corte 100% por divergência de peso (pesável) é
+      // silencioso, sem exigir liberação manual. O Sankhya, porém, sempre
+      // exige liberação pra qualquer corte — então aprovamos automaticamente
+      // com um usuário liberador dedicado, só nesse caso específico (nunca
+      // quando há divergência real de produto envolvida).
+      if (statusPosCorte === 'C' && apenasDivergenciaPesavel) {
+        const liberou = await this.autoLiberarCortePesavel(numeroConferencia);
+        if (liberou) statusPosCorte = await this.statusSankhyaDaConferencia(numeroConferencia);
+      }
+
       if (statusPosCorte !== 'C') {
         await finalizar();
       }
+    }
+  }
+
+  private readonly CLIENT_EVENT_CONFIRM = { clientEventList: { clientEvent: [{ $: 'br.com.sankhya.actionbutton.clientconfirm' }] } };
+  private liberadorCodUsuCache: number | null = null;
+
+  // Busca no Sankhya os itens de liberação de limite ainda pendentes
+  // (não liberados nem reprovados) pra essa conferência, na tabela de
+  // corte (TGFCOI2/DetalhesConferencia) — confirmado via captura do
+  // payload nativo da tela de liberação (ViewLiberacaoLimite).
+  private async buscarLiberacoesPendentes(numeroConferencia: number): Promise<Record<string, any>[]> {
+    const raw = await this.loadRecordsClient.loadRecords({
+      rootEntity: 'ViewLiberacaoLimite',
+      fieldset: 'EVENTO,NUCHAVE,NUCLL,SEQCASCATA,SEQUENCIA,TABELA',
+      criteria: {
+        expression: 'NUCHAVE = ? AND TABELA = ? AND DHLIB IS NULL',
+        parameters: [
+          { value: numeroConferencia, type: 'I' },
+          { value: 'TGFCOI2', type: 'S' },
+        ],
+      },
+    }).catch(() => null);
+    if (!raw) return [];
+    return this.loadRecordsClient.parseEntities(raw);
+  }
+
+  private async resolverCodUsuLiberador(nomeUsu: string): Promise<number | null> {
+    if (this.liberadorCodUsuCache != null) return this.liberadorCodUsuCache;
+    const raw = await this.loadRecordsClient.loadRecords({
+      rootEntity: 'Usuario',
+      fieldset: 'CODUSU',
+      criteria: { expression: 'NOMEUSU = ?', parameters: [{ value: nomeUsu, type: 'S' }] },
+      limit: 1,
+    }).catch(() => null);
+    if (!raw) return null;
+    const rows = this.loadRecordsClient.parseEntities(raw);
+    const codusu = rows[0]?.CODUSU;
+    this.liberadorCodUsuCache = codusu != null ? Number(codusu) : null;
+    return this.liberadorCodUsuCache;
+  }
+
+  // Aprova automaticamente, com um usuário liberador dedicado (credenciais
+  // via env LIBERADOR_USUARIO/LIBERADOR_SENHA), a liberação de corte pendente
+  // — só usado quando a divergência é 100% de peso (pesável), nunca quando há
+  // divergência real de produto. Qualquer falha aqui deixa a conferência
+  // aguardando liberação manual (fallback seguro) em vez de arriscar liberar
+  // errado.
+  private async autoLiberarCortePesavel(numeroConferencia: number): Promise<boolean> {
+    const usuarioLib = this.config.get<string>('LIBERADOR_USUARIO');
+    const senhaLib = this.config.get<string>('LIBERADOR_SENHA');
+    if (!usuarioLib || !senhaLib) {
+      this.logger.warn('[autoLiberarCortePesavel] LIBERADOR_USUARIO/LIBERADOR_SENHA não configurados — deixando aguardando liberação manual.');
+      return false;
+    }
+
+    try {
+      await this.chamarConferenciaSP('LiberacaoLimitesSP.validarSenhaUsuario', {
+        nomeUsu: usuarioLib,
+        senhaUsu: senhaLib,
+      }, this.CLIENT_EVENT_CONFIRM);
+
+      const pendentes = await this.buscarLiberacoesPendentes(numeroConferencia);
+      if (!pendentes.length) {
+        this.logger.warn(`[autoLiberarCortePesavel] nenhuma liberação pendente encontrada pra NUCONF=${numeroConferencia}`);
+        return false;
+      }
+
+      const codusu = await this.resolverCodUsuLiberador(usuarioLib);
+      if (codusu == null) {
+        this.logger.warn(`[autoLiberarCortePesavel] não achou CODUSU pro usuário liberador '${usuarioLib}'`);
+        return false;
+      }
+
+      for (const item of pendentes) {
+        await this.chamarConferenciaSP('LiberacaoLimitesSP.liberarNegarLimites', {
+          itens: [{
+            nuChave: Number(item.NUCHAVE),
+            evento: Number(item.EVENTO),
+            nucll: Number(item.NUCLL),
+            seqCascata: Number(item.SEQCASCATA),
+            sequencia: Number(item.SEQUENCIA),
+            tabela: item.TABELA,
+          }],
+          usuario: codusu,
+          liberar: 'S',
+          obsLib: 'Liberação automática — corte silencioso por divergência de peso (regra de negócio)',
+          vlrLib: 1,
+        }, this.CLIENT_EVENT_CONFIRM);
+      }
+
+      return true;
+    } catch (e: any) {
+      this.logger.warn(`[autoLiberarCortePesavel] falhou, deixando aguardando liberação manual: ${e?.message}`);
+      return false;
     }
   }
 
@@ -1044,6 +1152,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         peso: pesoBrutoTotal,
         qtdVol: totalVol,
         precisaCorte,
+        apenasDivergenciaPesavel: houveDivergenciaPesavel && !houveDivergencia,
         requestBodyDivergencia,
       });
 
@@ -1232,6 +1341,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       peso: pesoBrutoTotal,
       qtdVol,
       precisaCorte,
+      apenasDivergenciaPesavel: houveDivergenciaPesavel && !houveDivergencia,
       requestBodyDivergencia,
     });
 
