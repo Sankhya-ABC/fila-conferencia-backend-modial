@@ -343,11 +343,11 @@ export class ConferenciaService implements OnApplicationBootstrap {
       const nuconf = r.NUCONFATUAL ? Number(r.NUCONFATUAL) : null;
       const statusSankhya = nuconf ? (statusSankhyaMap.get(nuconf) ?? null) : null;
       const temSessaoLocal = activeNums.has(Number(r.NUNOTA));
-      // Recontagem (R/RA) é solicitada e controlada pelo Sankhya, sem sessão
-      // local — sem isso, essas notas caíam sempre em 'AC' (o default abaixo)
-      // e não apareciam nem no filtro "Aguardando Recontagem" nem discriminadas
+      // Recontagem (R/RA) e "Aguardando liberação de corte" (C) são
+      // controlados pelo Sankhya, sem sessão local — sem isso, essas notas
+      // caíam sempre em 'AC' (o default abaixo) e não ficavam discriminadas
       // de uma conferência comum aguardando início.
-      const codigoStatus = statusSankhya === 'R' || statusSankhya === 'RA'
+      const codigoStatus = statusSankhya === 'R' || statusSankhya === 'RA' || statusSankhya === 'C'
         ? statusSankhya
         : (temSessaoLocal ? 'A' : 'AC');
       return {
@@ -374,12 +374,14 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // Oculta notas com conferência ativa no Sankhya mas sem sessão local:
     // caso 1 — NUCONFATUAL preenchido e sem sessão
     // caso 2 — conferência ativa via NUNOTAORIG sem NUCONFATUAL vinculado (orfã)
-    // Recontagem (R/RA) é sempre mantida — é um estado real controlado pelo
-    // Sankhya, mesmo sem sessão local associada.
+    // Recontagem (R/RA) e liberação de corte pendente (C) são sempre
+    // mantidas — são estados reais controlados pelo Sankhya, mesmo sem
+    // sessão local associada.
     data = data.filter((d) =>
       d.codigoStatus === 'A' ||
       d.codigoStatus === 'R' ||
       d.codigoStatus === 'RA' ||
+      d.codigoStatus === 'C' ||
       (d.numeroConferencia === null && !nunotasComConfOrfa.has(d.numeroUnico)),
     );
 
@@ -861,7 +863,8 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // "Finalizar divergente": usuário optou por manter a diferença registrada
     // em vez de cortar (manterPendente=true) e há divergência real (não
     // pesável). Sem divergência (conferência normal) ou com corte, nada
-    // muda: STATUS continua 'F' (Finalizada OK) e sem clientEventList.
+    // muda: sem clientEventList (STATUS nunca é escrito por nós — quem
+    // decide é sempre a SP nativa do Sankhya).
     const houveDivergenciaMantida = houveDivergencia && manterPendente;
     const requestBodyDivergencia = houveDivergenciaMantida
       ? { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA }
@@ -873,12 +876,6 @@ export class ConferenciaService implements OnApplicationBootstrap {
     const requestBodyDivergenciaCortar = houveDivergencia
       ? { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA }
       : undefined;
-    // STATUS do TGFCON2 no Sankhya: 'D' = Finalizada divergente, 'F' = Finalizada OK
-    // (ver DominioService.getStatus()). Antes ficava sempre 'F', mesmo com
-    // divergência mantida — o clientEventList sozinho não muda o status da
-    // nota no Sankhya, quem faz isso é este campo.
-    const statusFinalizacao = houveDivergenciaMantida ? 'D' : 'F';
-
     const usuarioDb = await this.prisma.user.findFirst({ where: { codigo: sessao.idUsuario } });
     const nomeUsuario = usuarioDb?.nome ?? String(sessao.idUsuario);
 
@@ -1029,8 +1026,10 @@ export class ConferenciaService implements OnApplicationBootstrap {
         qtdVol: totalVol,
       }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
 
-      // STATUS — garante o fechamento local mesmo se finalizarConferencia não o fizer
-      const finSimp: Record<string, any> = { STATUS: statusFinalizacao, DHFINCONF: dh };
+      // Nunca sobrescrevemos STATUS aqui — quem decide (inclusive 'C',
+      // Aguardando liberação de corte, quando a alçada exige aprovação) é a
+      // própria SP nativa do Sankhya chamada acima.
+      const finSimp: Record<string, any> = { DHFINCONF: dh };
       if (temAdCubagem) finSimp['QTDVOL'] = totalVol;
       await comRetry(() =>
         this.datasetSP.save({ entityName: 'CabecalhoConferencia', pk: { NUCONF: numeroConferencia }, fieldsAndValues: finSimp })
@@ -1219,8 +1218,9 @@ export class ConferenciaService implements OnApplicationBootstrap {
       qtdVol,
     }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
 
-    // STATUS — garante o fechamento local mesmo se finalizarConferencia não o fizer
-    const finDet: Record<string, any> = { STATUS: statusFinalizacao, DHFINCONF: dh };
+    // Nunca sobrescrevemos STATUS — ver comentário equivalente no fluxo
+    // simplificado acima.
+    const finDet: Record<string, any> = { DHFINCONF: dh };
     if (temAdCubagem) finDet['QTDVOL'] = qtdVol;
     await comRetry(() =>
       this.datasetSP.save({
