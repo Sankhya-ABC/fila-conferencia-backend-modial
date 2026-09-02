@@ -28,7 +28,6 @@ body { font-family: 'Arial Narrow', Arial, sans-serif; font-weight: bold; }
 .f { position: absolute; font-size: 22px; }
 .bottom { display: flex; align-items: flex-end; }
 .center { display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
-.right-bottom { display: flex; align-items: flex-end; justify-content: flex-end; }
 
 .digit {
   position: absolute;
@@ -56,8 +55,8 @@ img { position: absolute; object-fit: contain; padding-left: 5px; }
   <!-- Cliente: x=15 y=16 w=395 h=30 -->
   <div class="f bottom" style="left:15px;top:16px;width:395px;height:30px;font-size:15px;overflow:hidden;white-space:nowrap;">Cliente: {{cliente}}</div>
 
-  <!-- UF: x=298 y=46 w=112 h=30 -->
-  <div class="f right-bottom" style="left:298px;top:46px;width:112px;height:30px;">UF: {{uf}}</div>
+  <!-- UF: x=15 y=46 w=112 h=30 -->
+  <div class="f bottom" style="left:15px;top:46px;width:112px;height:30px;">UF: {{uf}}</div>
 
   <!-- "Número do Pedido:": x=15 y=90 w=75 h=75 -->
   <div class="f center" style="left:15px;top:90px;width:75px;height:75px;">Número<br>Pedido:</div>
@@ -69,9 +68,9 @@ img { position: absolute; object-fit: contain; padding-left: 5px; }
   <div class="digit" style="left:298px;top:90px;width:54px;height:75px;">{{numeroUnicoDig4}}</div>
   <div class="digit" style="left:356px;top:90px;width:54px;height:75px;">{{numeroUnicoDig5}}</div>
 
-  <!-- Logo: x=15 y=185 w=75 h=75 (só quando o tenant tem logo definido) -->
+  <!-- Logo: x=15 y=165 w=100 h=100 (só quando o tenant tem logo definido) -->
   {{#if logoBase64}}
-  <img src="{{logoBase64}}" alt="Logo" style="left:15px;top:185px;width:75px;height:75px;">
+  <img src="{{logoBase64}}" alt="Logo" style="left:15px;top:165px;width:100px;height:100px;">
   {{/if}}
 
   <!-- REP_DIG1: x=150 y=180 -->
