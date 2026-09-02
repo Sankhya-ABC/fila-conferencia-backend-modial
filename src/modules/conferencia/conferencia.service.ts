@@ -65,6 +65,22 @@ export class ConferenciaService implements OnApplicationBootstrap {
     }
   }
 
+  // STATUS atual de um NUCONF direto no Sankhya (TGFCON2) — usado pra
+  // detectar sessão local travada em 'A' quando o Sankhya já seguiu em
+  // frente (excluída, recontagem, finalizada por fora). Retorna null se o
+  // registro não existe mais (ex.: excluído) ou a consulta falhar.
+  private async statusSankhyaDaConferencia(numeroConferencia: number): Promise<string | null> {
+    const raw = await this.loadRecordsClient.loadRecords({
+      rootEntity: 'CabecalhoConferencia',
+      fieldset: 'STATUS',
+      criteria: { expression: 'NUCONF = ?', parameters: [{ value: numeroConferencia, type: 'I' }] },
+      limit: 1,
+    }).catch(() => null);
+    if (!raw) return null;
+    const rows = this.loadRecordsClient.parseEntities(raw);
+    return rows[0]?.STATUS ?? null;
+  }
+
   private async chamarConferenciaSP(
     serviceName: string,
     params: Record<string, any>,
@@ -643,10 +659,22 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
   async postIniciarConferencia({ idUsuario, numeroUnico }: IniciarConferenciaBody) {
     this.filaCache.clear(); // status mudou — invalida cache da fila
-    // Se já existe sessão local ativa, retorna sem recriar
+    // Se já existe sessão local ativa, retorna sem recriar — MAS só se o
+    // Sankhya concorda que essa conferência ainda está de fato em 'A'. Se
+    // alguém excluiu a conferência direto no Sankhya, ou pediu recontagem
+    // (status vira 'D'/'R'/'RA' etc. sem passar pelo nosso finalizar/excluir),
+    // a sessão local fica travada em 'A' pra sempre — reusá-la aqui trazia de
+    // volta os checkboxes de pesável/não pesável já marcados 'C' da rodada
+    // anterior. Cai pro fluxo normal abaixo, que recria a sessão do zero.
     const sessaoExistente = await this.sessaoService.buscarPorNota(numeroUnico);
     if (sessaoExistente?.status === 'A') {
-      return { numeroConferencia: sessaoExistente.numeroConferencia };
+      const statusReal = await this.statusSankhyaDaConferencia(sessaoExistente.numeroConferencia);
+      if (statusReal === 'A') {
+        return { numeroConferencia: sessaoExistente.numeroConferencia };
+      }
+      this.logger.warn(
+        `[postIniciarConferencia] sessão local NUCONF=${sessaoExistente.numeroConferencia} presa em 'A' mas Sankhya reporta '${statusReal}' — recriando sessão`,
+      );
     }
 
     // Valida status da nota e ausência de conferência ativa no Sankhya
