@@ -30,12 +30,6 @@ body { font-family: 'Arial Narrow', Arial, sans-serif; font-weight: bold; }
 .center { display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.2; }
 .right-bottom { display: flex; align-items: flex-end; justify-content: flex-end; }
 
-.box {
-  position: absolute;
-  border: 1px solid #000;
-  border-radius: 10px;
-}
-
 .digit {
   position: absolute;
   border: 1px solid #000;
@@ -62,21 +56,18 @@ img { position: absolute; object-fit: contain; padding-left: 5px; }
   <!-- Cliente: x=15 y=16 w=395 h=30 -->
   <div class="f bottom" style="left:15px;top:16px;width:395px;height:30px;font-size:15px;overflow:hidden;white-space:nowrap;">Cliente: {{cliente}}</div>
 
-  <!-- Nro. Pedido: x=15 y=46 w=283 h=30 -->
-  <div class="f bottom" style="left:15px;top:46px;width:283px;height:30px;">Nro. Pedido: {{numTalao}}</div>
-
   <!-- UF: x=298 y=46 w=112 h=30 -->
   <div class="f right-bottom" style="left:298px;top:46px;width:112px;height:30px;">UF: {{uf}}</div>
 
-  <!-- "Nota Fiscal:": x=15 y=90 w=75 h=75 -->
-  <div class="f center" style="left:15px;top:90px;width:75px;height:75px;">Nota<br>Fiscal:</div>
+  <!-- "Número Único:": x=15 y=90 w=75 h=75 -->
+  <div class="f center" style="left:15px;top:90px;width:75px;height:75px;">Número<br>Único:</div>
 
-  <!-- 5 caixas NF vazias -->
-  <div class="box" style="left:121px;top:90px;width:54px;height:75px;"></div>
-  <div class="box" style="left:180px;top:90px;width:54px;height:75px;"></div>
-  <div class="box" style="left:239px;top:90px;width:54px;height:75px;"></div>
-  <div class="box" style="left:298px;top:90px;width:54px;height:75px;"></div>
-  <div class="box" style="left:356px;top:90px;width:54px;height:75px;"></div>
+  <!-- 5 caixas com os dígitos do Número Único -->
+  <div class="digit" style="left:121px;top:90px;width:54px;height:75px;">{{numeroUnicoDig1}}</div>
+  <div class="digit" style="left:180px;top:90px;width:54px;height:75px;">{{numeroUnicoDig2}}</div>
+  <div class="digit" style="left:239px;top:90px;width:54px;height:75px;">{{numeroUnicoDig3}}</div>
+  <div class="digit" style="left:298px;top:90px;width:54px;height:75px;">{{numeroUnicoDig4}}</div>
+  <div class="digit" style="left:356px;top:90px;width:54px;height:75px;">{{numeroUnicoDig5}}</div>
 
   <!-- Logo: x=15 y=185 w=75 h=75 (só quando o tenant tem logo definido) -->
   {{#if logoBase64}}

@@ -72,15 +72,22 @@ export class ArquivoService {
         seqVol = String(row.seqVol).padStart(2, '0');
       }
 
+      const numeroUnico = String(row.numeroUnico ?? '').padStart(5, '0').slice(-5);
+
       return {
         cliente: row.cliente,
-        numTalao: row.numTalao ?? '',
         uf: row.uf ?? '',
 
         seqVolDig1: seqVol[0] ?? '0',
         seqVolDig2: seqVol[1] ?? '0',
         totalVolDig1: totalVol[0] ?? '0',
         totalVolDig2: totalVol[1] ?? '0',
+
+        numeroUnicoDig1: numeroUnico[0],
+        numeroUnicoDig2: numeroUnico[1],
+        numeroUnicoDig3: numeroUnico[2],
+        numeroUnicoDig4: numeroUnico[3],
+        numeroUnicoDig5: numeroUnico[4],
 
         logoBase64,
         printDateTime,
