@@ -323,7 +323,13 @@ export class ConferenciaService implements OnApplicationBootstrap {
       const nuconf = r.NUCONFATUAL ? Number(r.NUCONFATUAL) : null;
       const statusSankhya = nuconf ? (statusSankhyaMap.get(nuconf) ?? null) : null;
       const temSessaoLocal = activeNums.has(Number(r.NUNOTA));
-      const codigoStatus = temSessaoLocal ? 'A' : 'AC';
+      // Recontagem (R/RA) é solicitada e controlada pelo Sankhya, sem sessão
+      // local — sem isso, essas notas caíam sempre em 'AC' (o default abaixo)
+      // e não apareciam nem no filtro "Aguardando Recontagem" nem discriminadas
+      // de uma conferência comum aguardando início.
+      const codigoStatus = statusSankhya === 'R' || statusSankhya === 'RA'
+        ? statusSankhya
+        : (temSessaoLocal ? 'A' : 'AC');
       return {
         codigoStatus,
         statusSankhya,
@@ -348,8 +354,12 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // Oculta notas com conferência ativa no Sankhya mas sem sessão local:
     // caso 1 — NUCONFATUAL preenchido e sem sessão
     // caso 2 — conferência ativa via NUNOTAORIG sem NUCONFATUAL vinculado (orfã)
+    // Recontagem (R/RA) é sempre mantida — é um estado real controlado pelo
+    // Sankhya, mesmo sem sessão local associada.
     data = data.filter((d) =>
       d.codigoStatus === 'A' ||
+      d.codigoStatus === 'R' ||
+      d.codigoStatus === 'RA' ||
       (d.numeroConferencia === null && !nunotasComConfOrfa.has(d.numeroUnico)),
     );
 
