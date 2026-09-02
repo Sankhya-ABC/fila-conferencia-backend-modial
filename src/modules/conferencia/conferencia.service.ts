@@ -818,11 +818,17 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
     // "Finalizar divergente": usuário optou por manter a diferença registrada
     // em vez de cortar (manterPendente=true) e há divergência real (não
-    // pesável) — é o único caso que manda o clientEventList pro Sankhya.
-    // Sem divergência (conferência normal) ou com corte, nada muda aqui.
-    const requestBodyDivergencia = (houveDivergencia && manterPendente)
+    // pesável). Sem divergência (conferência normal) ou com corte, nada
+    // muda: STATUS continua 'F' (Finalizada OK) e sem clientEventList.
+    const houveDivergenciaMantida = houveDivergencia && manterPendente;
+    const requestBodyDivergencia = houveDivergenciaMantida
       ? { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA }
       : undefined;
+    // STATUS do TGFCON2 no Sankhya: 'D' = Finalizada divergente, 'F' = Finalizada OK
+    // (ver DominioService.getStatus()). Antes ficava sempre 'F', mesmo com
+    // divergência mantida — o clientEventList sozinho não muda o status da
+    // nota no Sankhya, quem faz isso é este campo.
+    const statusFinalizacao = houveDivergenciaMantida ? 'D' : 'F';
 
     const usuarioDb = await this.prisma.user.findFirst({ where: { codigo: sessao.idUsuario } });
     const nomeUsuario = usuarioDb?.nome ?? String(sessao.idUsuario);
@@ -974,8 +980,8 @@ export class ConferenciaService implements OnApplicationBootstrap {
         qtdVol: totalVol,
       }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
 
-      // STATUS='F' — garante o fechamento local mesmo se finalizarConferencia não o fizer
-      const finSimp: Record<string, any> = { STATUS: 'F', DHFINCONF: dh };
+      // STATUS — garante o fechamento local mesmo se finalizarConferencia não o fizer
+      const finSimp: Record<string, any> = { STATUS: statusFinalizacao, DHFINCONF: dh };
       if (temAdCubagem) finSimp['QTDVOL'] = totalVol;
       await comRetry(() =>
         this.datasetSP.save({ entityName: 'CabecalhoConferencia', pk: { NUCONF: numeroConferencia }, fieldsAndValues: finSimp })
@@ -1164,8 +1170,8 @@ export class ConferenciaService implements OnApplicationBootstrap {
       qtdVol,
     }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
 
-    // STATUS='F' — garante o fechamento local mesmo se finalizarConferencia não o fizer
-    const finDet: Record<string, any> = { STATUS: 'F', DHFINCONF: dh };
+    // STATUS — garante o fechamento local mesmo se finalizarConferencia não o fizer
+    const finDet: Record<string, any> = { STATUS: statusFinalizacao, DHFINCONF: dh };
     if (temAdCubagem) finDet['QTDVOL'] = qtdVol;
     await comRetry(() =>
       this.datasetSP.save({
