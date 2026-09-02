@@ -82,6 +82,42 @@ export class ConferenciaService implements OnApplicationBootstrap {
     return status != null ? String(status).trim() : null;
   }
 
+  // Replica a sequência exata do app nativo (confirmada em 3 capturas de
+  // payload): finalizarConferencia PRIMEIRO (mesmo com divergência
+  // pendente) — é isso que aparentemente credencia o cortar a rodar direito
+  // — depois cortar (se precisar), e finalizarConferencia DE NOVO só se o
+  // corte não deixou a conferência aguardando liberação (STATUS 'C'). Quando
+  // a TGFCCO exige aprovação, o nativo para no cortar e não finaliza de
+  // novo — a nota fica "Aguardando liberação de corte" até alguém aprovar.
+  private async executarFinalizacaoSankhya(params: {
+    numeroConferencia: number;
+    nuNota: number;
+    peso: number;
+    qtdVol: number;
+    precisaCorte: boolean;
+    requestBodyDivergencia: Record<string, any>;
+  }): Promise<void> {
+    const { numeroConferencia, nuNota, peso, qtdVol, precisaCorte, requestBodyDivergencia } = params;
+
+    const finalizar = () =>
+      this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
+        nuConf: String(numeroConferencia),
+        peso,
+        qtdVol,
+      }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
+
+    await finalizar();
+
+    if (precisaCorte) {
+      await this.chamarConferenciaSP('ConferenciaSP.cortar', { nuNota, peso, qtdVol }, requestBodyDivergencia);
+
+      const statusPosCorte = await this.statusSankhyaDaConferencia(numeroConferencia);
+      if (statusPosCorte !== 'C') {
+        await finalizar();
+      }
+    }
+  }
+
   private async chamarConferenciaSP(
     serviceName: string,
     params: Record<string, any>,
@@ -860,22 +896,11 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // OU se o pesável divergiu — esse último sempre, incondicional.
     const precisaCorte = houveDivergenciaPesavel || (!manterPendente && houveDivergencia);
 
-    // "Finalizar divergente": usuário optou por manter a diferença registrada
-    // em vez de cortar (manterPendente=true) e há divergência real (não
-    // pesável). Sem divergência (conferência normal) ou com corte, nada
-    // muda: sem clientEventList (STATUS nunca é escrito por nós — quem
-    // decide é sempre a SP nativa do Sankhya).
-    const houveDivergenciaMantida = houveDivergencia && manterPendente;
-    const requestBodyDivergencia = houveDivergenciaMantida
-      ? { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA }
-      : undefined;
-    // "Executar corte": o nativo também manda o mesmo clientEventList junto
-    // com ConferenciaSP.cortar quando há divergência real (não pesável) —
-    // confirmado num payload capturado do sistema nativo. Corte só por
-    // divergência de peso (silencioso, automático) não entra aqui.
-    const requestBodyDivergenciaCortar = houveDivergencia
-      ? { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA }
-      : undefined;
+    // Três capturas do payload nativo (Sankhya desktop) confirmaram: o
+    // clientEventList (mesmos 8 eventos) vai em TODA chamada de
+    // ConferenciaSP.cortar e ConferenciaSP.finalizarConferencia — com ou sem
+    // divergência, com ou sem corte. Não é condicional a nada.
+    const requestBodyDivergencia = { clientEventList: ConferenciaService.CLIENT_EVENTS_DIVERGENCIA };
     const usuarioDb = await this.prisma.user.findFirst({ where: { codigo: sessao.idUsuario } });
     const nomeUsuario = usuarioDb?.nome ?? String(sessao.idUsuario);
 
@@ -1013,18 +1038,14 @@ export class ConferenciaService implements OnApplicationBootstrap {
       // Corte e finalização via Sankhya — processa divergências, gera financeiro e carimba DHFINCONF.
       // manterPendente: pula o corte — item não conferido fica pendente no pedido pra entrega futura.
       // Sem divergência real (bateu tudo), o corte é pulado mesmo com manterPendente=false.
-      if (precisaCorte) {
-        await this.chamarConferenciaSP('ConferenciaSP.cortar', {
-          nuNota: sessao.numeroUnico,
-          peso: pesoBrutoTotal,
-          qtdVol: totalVol,
-        }, requestBodyDivergenciaCortar);
-      }
-      await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
-        nuConf: String(numeroConferencia),
+      await this.executarFinalizacaoSankhya({
+        numeroConferencia,
+        nuNota: sessao.numeroUnico,
         peso: pesoBrutoTotal,
         qtdVol: totalVol,
-      }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
+        precisaCorte,
+        requestBodyDivergencia,
+      });
 
       // Nunca sobrescrevemos STATUS aqui — quem decide (inclusive 'C',
       // Aguardando liberação de corte, quando a alçada exige aprovação) é a
@@ -1205,18 +1226,14 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // manterPendente: pula o corte — item não conferido fica pendente no pedido pra entrega futura.
     // Sem divergência real (bateu tudo), o corte é pulado mesmo com manterPendente=false.
     const qtdVol = dados.volumes.length;
-    if (precisaCorte) {
-      await this.chamarConferenciaSP('ConferenciaSP.cortar', {
-        nuNota: sessao.numeroUnico,
-        peso: pesoBrutoTotal,
-        qtdVol,
-      }, requestBodyDivergenciaCortar);
-    }
-    await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
-      nuConf: String(numeroConferencia),
+    await this.executarFinalizacaoSankhya({
+      numeroConferencia,
+      nuNota: sessao.numeroUnico,
       peso: pesoBrutoTotal,
       qtdVol,
-    }, requestBodyDivergencia).catch((e) => this.logger.warn('[finalizarConferencia] non-fatal:', e?.message));
+      precisaCorte,
+      requestBodyDivergencia,
+    });
 
     // Nunca sobrescrevemos STATUS — ver comentário equivalente no fluxo
     // simplificado acima.
