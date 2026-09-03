@@ -1134,23 +1134,32 @@ export class ConferenciaService implements OnApplicationBootstrap {
     // ao pedido) — não basta "manterPendente=false", que é o valor padrão até
     // numa conferência 100% batida. Sem isso o corte rodava em toda conferência.
     //
-    // Pesável nunca conta como divergência (peso variar do nominal, pra mais
-    // ou pra menos, é esperado) — o corte dele roda sempre que necessário,
-    // automático e silencioso, sem depender de manterPendente nem virar
-    // pop-up pro usuário. Divergência "de verdade" (que barra, avisa e só
-    // corta se o usuário confirmar) é exclusiva do não pesável.
+    // Pesável: variação de peso dentro de ±5% do nominal é esperada (perda de
+    // água, aparas etc.) — corte automático e silencioso, sem liberação
+    // manual. Acima de 5% (pra mais ou pra menos) deixa de ser "esperado" e
+    // passa a exigir liberação manual, igual divergência de produto normal.
+    const TOLERANCIA_PESO_PCT = 0.05;
+    const pesavelExcedeTolerancia = (i: { qtdConferidaSankhya: number; qtdConferidaLocal: number; qtdNeg: number }) => {
+      const conferido = Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5));
+      const base = i.qtdNeg || conferido;
+      if (!base) return false;
+      return Math.abs(conferido - i.qtdNeg) / base > TOLERANCIA_PESO_PCT;
+    };
     const houveDivergenciaPesavel = dados.itens.some((i) => {
       if (!i.usaConfPeso) return false;
       const conferido = Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5));
       return conferido !== Number(i.qtdNeg.toFixed(5));
     });
+    const houvePesavelForaTolerancia = dados.itens.some((i) => i.usaConfPeso && pesavelExcedeTolerancia(i));
     const houveDivergencia = dados.itens.some((i) => {
       if (i.usaConfPeso) return false;
       const conferido = Number((i.qtdConferidaSankhya + i.qtdConferidaLocal).toFixed(5));
       return conferido !== Number(i.qtdNeg.toFixed(5));
     });
     // Corte roda se o não pesável divergiu e o usuário confirmou (!manterPendente),
-    // OU se o pesável divergiu — esse último sempre, incondicional.
+    // OU se o pesável divergiu — esse último sempre, incondicional (é o corte
+    // que reconcilia a quantidade no Sankhya; a liberação automática ou
+    // manual é decidida depois, separadamente).
     const precisaCorte = houveDivergenciaPesavel || (!manterPendente && houveDivergencia);
 
     // Três capturas do payload nativo (Sankhya desktop) confirmaram: o
@@ -1301,7 +1310,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
         peso: pesoBrutoTotal,
         qtdVol: totalVol,
         precisaCorte,
-        apenasDivergenciaPesavel: houveDivergenciaPesavel && !houveDivergencia,
+        apenasDivergenciaPesavel: houveDivergenciaPesavel && !houveDivergencia && !houvePesavelForaTolerancia,
         requestBodyDivergencia,
       });
 
@@ -1490,7 +1499,7 @@ export class ConferenciaService implements OnApplicationBootstrap {
       peso: pesoBrutoTotal,
       qtdVol,
       precisaCorte,
-      apenasDivergenciaPesavel: houveDivergenciaPesavel && !houveDivergencia,
+      apenasDivergenciaPesavel: houveDivergenciaPesavel && !houveDivergencia && !houvePesavelForaTolerancia,
       requestBodyDivergencia,
     });
 
