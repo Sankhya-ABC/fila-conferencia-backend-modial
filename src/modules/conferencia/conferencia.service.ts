@@ -201,16 +201,18 @@ export class ConferenciaService implements OnApplicationBootstrap {
         return false;
       }
 
-      const qtd = await this.liberarOuNegarPendentes(
-        numeroConferencia,
+      const pendentes = await this.buscarLiberacoesPendentes(numeroConferencia);
+      if (!pendentes.length) {
+        this.logger.warn(`[autoLiberarCortePesavel] nenhuma liberação pendente encontrada pra NUCONF=${numeroConferencia}`);
+        return false;
+      }
+
+      await this.liberarOuNegarItens(
+        pendentes,
         codusu,
         'S',
         'Liberação automática — corte silencioso por divergência de peso (regra de negócio)',
       );
-      if (qtd === 0) {
-        this.logger.warn(`[autoLiberarCortePesavel] nenhuma liberação pendente encontrada pra NUCONF=${numeroConferencia}`);
-        return false;
-      }
 
       return true;
     } catch (e: any) {
@@ -219,34 +221,32 @@ export class ConferenciaService implements OnApplicationBootstrap {
     }
   }
 
-  // Libera ou nega, em lote, todos os itens de liberação pendentes de uma
-  // conferência — usado tanto pela auto-liberação (corte de peso) quanto
-  // pela liberação manual (tela "Liberação de Corte"). Retorna quantos itens
-  // foram processados (0 = nada pendente encontrado).
-  private async liberarOuNegarPendentes(
-    numeroConferencia: number,
+  // Libera ou nega, numa ÚNICA chamada em lote, a lista de itens informada
+  // (todos com o mesmo NUCHAVE/TABELA/EVENTO/NUCLL/SEQCASCATA — só SEQUENCIA
+  // varia por item/produto). Usado tanto pela auto-liberação (corte de peso,
+  // sempre todos os pendentes) quanto pela liberação manual (só os
+  // selecionados pelo operador na tela).
+  private async liberarOuNegarItens(
+    itens: Record<string, any>[],
     codusu: number,
     liberar: 'S' | 'N',
     obs: string,
-  ): Promise<number> {
-    const pendentes = await this.buscarLiberacoesPendentes(numeroConferencia);
-    for (const item of pendentes) {
-      await this.chamarConferenciaSP('LiberacaoLimitesSP.liberarNegarLimites', {
-        itens: [{
-          nuChave: Number(item.NUCHAVE),
-          evento: Number(item.EVENTO),
-          nucll: Number(item.NUCLL),
-          seqCascata: Number(item.SEQCASCATA),
-          sequencia: Number(item.SEQUENCIA),
-          tabela: item.TABELA,
-        }],
-        usuario: codusu,
-        liberar,
-        obsLib: obs,
-        vlrLib: 1,
-      }, this.CLIENT_EVENT_CONFIRM, 'mge');
-    }
-    return pendentes.length;
+  ): Promise<void> {
+    if (!itens.length) return;
+    await this.chamarConferenciaSP('LiberacaoLimitesSP.liberarNegarLimites', {
+      itens: itens.map((item) => ({
+        nuChave: Number(item.NUCHAVE),
+        evento: Number(item.EVENTO),
+        nucll: Number(item.NUCLL),
+        seqCascata: Number(item.SEQCASCATA),
+        sequencia: Number(item.SEQUENCIA),
+        tabela: item.TABELA,
+      })),
+      usuario: codusu,
+      liberar,
+      obsLib: obs,
+      vlrLib: 1,
+    }, this.CLIENT_EVENT_CONFIRM, 'mge');
   }
 
   // ─── Liberação manual de corte (tela "Liberação de Corte") ────────────────
@@ -254,13 +254,18 @@ export class ConferenciaService implements OnApplicationBootstrap {
   async getLiberacoesPendentes({ numeroConferencia }: NumeroConferenciaFilter) {
     const pendentes = await this.buscarLiberacoesPendentes(numeroConferencia);
     return pendentes.map((p) => ({
+      sequencia: Number(p.SEQUENCIA),
       observacao: p.OBSERVACAO ?? null,
       vlrAtual: p.VLRATUAL != null ? Number(p.VLRATUAL) : null,
       vlrLimite: p.VLRLIMITE != null ? Number(p.VLRLIMITE) : null,
     }));
   }
 
-  async postLiberarCorte({ numeroConferencia, usuario, senha, liberar, obs }: LiberarCorteBody) {
+  async postLiberarCorte({ numeroConferencia, usuario, senha, liberar, obs, sequencias }: LiberarCorteBody) {
+    if (!sequencias?.length) {
+      throw new BadRequestException('Selecione pelo menos um item para liberar ou negar.');
+    }
+
     let authRes: any;
     try {
       authRes = await this.chamarConferenciaSP('LiberacaoLimitesSP.validarSenhaUsuario', {
@@ -276,32 +281,39 @@ export class ConferenciaService implements OnApplicationBootstrap {
       throw new BadRequestException('Não foi possível validar o usuário liberador.');
     }
 
+    const pendentes = await this.buscarLiberacoesPendentes(numeroConferencia);
+    const selecionados = pendentes.filter((p) => sequencias.includes(Number(p.SEQUENCIA)));
+    if (!selecionados.length) {
+      throw new BadRequestException('Nenhum dos itens selecionados está mais pendente de liberação.');
+    }
+
     const obsFinal = obs?.trim() || (liberar === 'S'
       ? 'Liberado manualmente pela tela de Liberação de Corte'
       : 'Negado manualmente pela tela de Liberação de Corte');
 
-    const qtd = await this.liberarOuNegarPendentes(numeroConferencia, codusu, liberar, obsFinal);
-    if (qtd === 0) {
-      throw new BadRequestException('Nenhuma liberação pendente encontrada para essa conferência.');
-    }
+    await this.liberarOuNegarItens(selecionados, codusu, liberar, obsFinal);
 
     if (liberar === 'S') {
-      // Fecha a conferência de vez, replicando a sequência nativa
-      // (finalizar → cortar → finalizar de novo depois de liberado). Peso/
-      // qtdVol em 0 igual em toda captura nativa que vimos desse segundo
-      // finalizar — não-fatal, se falhar a nota já está liberada no Sankhya,
-      // só não fechou local ainda.
-      await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
-        nuConf: String(numeroConferencia),
-        peso: 0,
-        qtdVol: 0,
-      }, this.CLIENT_EVENT_CONFIRM).catch((e) =>
-        this.logger.warn(`[postLiberarCorte] finalizarConferencia pós-liberação falhou (non-fatal): ${e?.message}`),
-      );
+      // Só finaliza de novo quando NÃO sobrou nenhum outro item pendente pra
+      // essa conferência — se o operador liberou só parte dos itens, a
+      // conferência continua aguardando o resto (não fecha pela metade).
+      const restantes = await this.buscarLiberacoesPendentes(numeroConferencia);
+      if (restantes.length === 0) {
+        // Peso/qtdVol em 0 igual em toda captura nativa que vimos desse
+        // segundo finalizar — não-fatal, se falhar a nota já está liberada
+        // no Sankhya, só não fechou local ainda.
+        await this.chamarConferenciaSP('ConferenciaSP.finalizarConferencia', {
+          nuConf: String(numeroConferencia),
+          peso: 0,
+          qtdVol: 0,
+        }, this.CLIENT_EVENT_CONFIRM).catch((e) =>
+          this.logger.warn(`[postLiberarCorte] finalizarConferencia pós-liberação falhou (non-fatal): ${e?.message}`),
+        );
+      }
     }
 
     this.filaCache.clear();
-    return { ok: true, itensProcessados: qtd };
+    return { ok: true, itensProcessados: selecionados.length };
   }
 
   private async chamarConferenciaSP(

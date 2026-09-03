@@ -122,6 +122,12 @@ export class LiberarCorteBody extends NumeroConferenciaFilter {
   // 'S' = libera o corte, 'N' = nega.
   @IsString() liberar: 'S' | 'N';
 
+  // SEQUENCIA dos itens selecionados pelo operador (de
+  // GET /conferencias/liberacoes-pendentes) — a ação roda em lote só pra
+  // esses, não pra todos os pendentes da conferência.
+  @IsInt({ each: true })
+  sequencias: number[];
+
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
