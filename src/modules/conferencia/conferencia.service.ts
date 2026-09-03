@@ -134,24 +134,40 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
   private readonly CLIENT_EVENT_CONFIRM = { clientEventList: { clientEvent: [{ $: 'br.com.sankhya.actionbutton.clientconfirm' }] } };
 
+  // Código fixo de evento do Sankhya pra liberação de corte de conferência
+  // (TGFCOI2) — confirmado em múltiplas capturas de payload nativo e por
+  // extração direta do banco, sempre 64 pra esse tipo de liberação.
+  private static readonly EVENTO_LIBERACAO_CORTE = 64;
+
   // Busca no Sankhya os itens de liberação de limite ainda pendentes
-  // (não liberados nem reprovados) pra essa conferência, na tabela de
-  // corte (TGFCOI2/DetalhesConferencia) — confirmado via captura do
-  // payload nativo da tela de liberação (ViewLiberacaoLimite).
+  // (CODUSULIB = 0) pra essa conferência, na tabela de corte
+  // (TGFCOI2/DetalhesConferencia). Usa DatasetSP.loadRecords diretamente
+  // (não o CRUDServiceProvider.loadRecords genérico) — é o serviço que o
+  // app nativo usa pra essa View, confirmado por teste; SEM o parâmetro
+  // crudListener, que faz a consulta falhar silenciosamente ("Sem mensagem
+  // de erro") por esperar o WHERE completo de permissões que só o app
+  // nativo monta.
   private async buscarLiberacoesPendentes(numeroConferencia: number): Promise<Record<string, any>[]> {
-    const raw = await this.loadRecordsClient.loadRecords({
-      rootEntity: 'ViewLiberacaoLimite',
-      fieldset: 'EVENTO,NUCHAVE,NUCLL,SEQCASCATA,SEQUENCIA,TABELA',
-      criteria: {
-        expression: 'NUCHAVE = ? AND TABELA = ? AND DHLIB IS NULL',
-        parameters: [
-          { value: numeroConferencia, type: 'I' },
-          { value: 'TGFCOI2', type: 'S' },
-        ],
+    const fields = ['NUCHAVE', 'TABELA', 'EVENTO', 'NUCLL', 'SEQCASCATA', 'SEQUENCIA', 'CODUSULIB'];
+    const body = {
+      serviceName: 'DatasetSP.loadRecords',
+      requestBody: {
+        dataSetID: '001',
+        entityName: 'ViewLiberacaoLimite',
+        standAlone: true,
+        fields,
+        tryJoinedFields: true,
+        criteria: {
+          expression: `this.NUCHAVE = ${numeroConferencia} AND this.TABELA = 'TGFCOI2' AND this.EVENTO = ${ConferenciaService.EVENTO_LIBERACAO_CORTE} AND this.CODUSULIB = 0`,
+        },
       },
-    }).catch(() => null);
-    if (!raw) return [];
-    return this.loadRecordsClient.parseEntities(raw);
+    };
+    const res = await this.gateway.client
+      .post('/mge/service.sbr?serviceName=DatasetSP.loadRecords&outputType=json', body)
+      .catch(() => null);
+    if (!res || res.data?.status !== '1') return [];
+    const rows: string[][] = res.data?.responseBody?.result ?? [];
+    return rows.map((r) => Object.fromEntries(fields.map((f, i) => [f, r[i]])));
   }
 
   // Aprova automaticamente, com um usuário liberador dedicado (credenciais
