@@ -9,6 +9,7 @@ import {
   IniciarConferenciaBody,
   ConcluirEtapaBody,
   FinalizarConferenciaBody,
+  LiberarCorteBody,
 } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 
@@ -79,5 +80,17 @@ export class ConferenciaController {
   @ApiOperation({ summary: 'Faturar nota via SelecaoDocumentoSP.faturar' })
   faturarNota(@Body() dto: FaturarNotaDto) {
     return this.service.faturarNota(dto.nunota, dto.codTipOper, dto.serie ?? '1');
+  }
+
+  @Get('liberacoes-pendentes')
+  @ApiOperation({ summary: 'Lista os itens de liberação de corte pendentes de uma conferência' })
+  getLiberacoesPendentes(@Query() query: NumeroConferenciaFilter) {
+    return this.service.getLiberacoesPendentes(query);
+  }
+
+  @Post('liberar-corte')
+  @ApiOperation({ summary: 'Libera ou nega o corte pendente de uma conferência (tela Liberação de Corte)' })
+  postLiberarCorte(@Body() body: LiberarCorteBody) {
+    return this.service.postLiberarCorte(body);
   }
 }
