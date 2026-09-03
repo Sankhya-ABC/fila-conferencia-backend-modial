@@ -10,6 +10,7 @@ import {
   ConcluirEtapaBody,
   FinalizarConferenciaBody,
   LiberarCorteBody,
+  ValidarLiberadorBody,
 } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 
@@ -86,6 +87,12 @@ export class ConferenciaController {
   @ApiOperation({ summary: 'Lista os itens de liberação de corte pendentes de uma conferência' })
   getLiberacoesPendentes(@Query() query: NumeroConferenciaFilter) {
     return this.service.getLiberacoesPendentes(query);
+  }
+
+  @Post('validar-liberador')
+  @ApiOperation({ summary: 'Valida usuário/senha do liberador no Sankhya (etapa 1 do modal de liberação)' })
+  validarLiberador(@Body() body: ValidarLiberadorBody) {
+    return this.service.validarLiberador(body);
   }
 
   @Post('liberar-corte')

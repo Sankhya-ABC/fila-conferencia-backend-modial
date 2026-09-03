@@ -112,6 +112,11 @@ export class FinalizarConferenciaBody extends NumeroConferenciaFilter {
   manterPendente?: boolean;
 }
 
+export class ValidarLiberadorBody {
+  @IsString() usuario: string;
+  @IsString() senha: string;
+}
+
 export class LiberarCorteBody extends NumeroConferenciaFilter {
   // Usuário/senha do Sankhya de quem está aprovando/negando — a própria SP
   // de liberação (LiberacaoLimitesSP) exige essa validação, igual o app

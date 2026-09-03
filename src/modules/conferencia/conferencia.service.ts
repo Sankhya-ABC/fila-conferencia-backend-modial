@@ -4,7 +4,7 @@ import { SankhyaLoadRecordsClient } from 'src/http-client/load-records/load-reco
 import { SankhyaDatasetSPClient } from 'src/http-client/dataset-sp/dataset-sp.client';
 import { GatewayClient } from 'src/http-client/gateway/gateway.client';
 import { ConferenciaHelper } from './conferencia.helper';
-import { FilaConferenciaFilter, IniciarConferenciaBody, ConcluirEtapaBody, FinalizarConferenciaBody, LiberarCorteBody } from './dto/conferencia.dto';
+import { FilaConferenciaFilter, IniciarConferenciaBody, ConcluirEtapaBody, FinalizarConferenciaBody, LiberarCorteBody, ValidarLiberadorBody } from './dto/conferencia.dto';
 import { NumeroConferenciaFilter, NumeroUnicoFilter } from '../dto/model';
 import { SessaoService } from '../sessao/sessao.service';
 import { PrismaService } from 'prisma/prisma.service';
@@ -251,14 +251,71 @@ export class ConferenciaService implements OnApplicationBootstrap {
 
   // ─── Liberação manual de corte (tela "Liberação de Corte") ────────────────
 
+  // OBSERVACAO vem da própria ViewLiberacaoLimite como texto único — a View
+  // é genérica (usada por vários tipos de evento de liberação no Sankhya),
+  // não tem colunas separadas de produto/quantidade. Formato confirmado em
+  // capturas reais: "Prod.: X, Qtd. total conf.: N UN, Qtd. total
+  // pedido/nota: N UN". Faz o parse aqui pra render a tabela estruturada no
+  // modal (Produto | Qtd. pedido | Qtd. conferida | Diferença).
+  private parseObservacaoLiberacao(observacao: string | null): {
+    produto: string | null;
+    qtdPedido: number | null;
+    unidadePedido: string | null;
+    qtdConferida: number | null;
+    unidadeConferida: string | null;
+  } {
+    const vazio = { produto: observacao, qtdPedido: null, unidadePedido: null, qtdConferida: null, unidadeConferida: null };
+    if (!observacao) return { ...vazio, produto: null };
+    const m = observacao.match(
+      /^Prod\.:\s*(.+?),\s*Qtd\.\s*total\s*conf\.:\s*([\d.]+)\s*(\S+),\s*Qtd\.\s*total\s*pedido\/nota:\s*([\d.]+)\s*(\S+)/i,
+    );
+    if (!m) return vazio;
+    return {
+      produto: m[1].trim(),
+      qtdConferida: Number(parseFloat(m[2]).toFixed(3)),
+      unidadeConferida: m[3],
+      qtdPedido: Number(parseFloat(m[4]).toFixed(3)),
+      unidadePedido: m[5],
+    };
+  }
+
   async getLiberacoesPendentes({ numeroConferencia }: NumeroConferenciaFilter) {
     const pendentes = await this.buscarLiberacoesPendentes(numeroConferencia);
-    return pendentes.map((p) => ({
-      sequencia: Number(p.SEQUENCIA),
-      observacao: p.OBSERVACAO ?? null,
-      vlrAtual: p.VLRATUAL != null ? Number(p.VLRATUAL) : null,
-      vlrLimite: p.VLRLIMITE != null ? Number(p.VLRLIMITE) : null,
-    }));
+    return pendentes.map((p) => {
+      const parsed = this.parseObservacaoLiberacao(p.OBSERVACAO ?? null);
+      const diferenca = parsed.qtdConferida != null && parsed.qtdPedido != null
+        ? Number((parsed.qtdConferida - parsed.qtdPedido).toFixed(3))
+        : null;
+      return {
+        sequencia: Number(p.SEQUENCIA),
+        produto: parsed.produto,
+        qtdPedido: parsed.qtdPedido,
+        unidadePedido: parsed.unidadePedido,
+        qtdConferida: parsed.qtdConferida,
+        unidadeConferida: parsed.unidadeConferida,
+        diferenca,
+      };
+    });
+  }
+
+  // Etapa 1 do modal — só valida usuário/senha no Sankhya, não libera/nega
+  // nada ainda. Usa o mesmo LiberacaoLimitesSP.validarSenhaUsuario que a
+  // liberação de verdade também chama.
+  async validarLiberador({ usuario, senha }: ValidarLiberadorBody) {
+    let authRes: any;
+    try {
+      authRes = await this.chamarConferenciaSP('LiberacaoLimitesSP.validarSenhaUsuario', {
+        nomeUsu: usuario,
+        senhaUsu: senha,
+      }, this.CLIENT_EVENT_CONFIRM, 'mge');
+    } catch {
+      throw new BadRequestException('Usuário ou senha inválidos no Sankhya.');
+    }
+    const codusu = authRes?.responseBody?.codUsu != null ? Number(authRes.responseBody.codUsu) : null;
+    if (codusu == null) {
+      throw new BadRequestException('Não foi possível validar o usuário liberador.');
+    }
+    return { ok: true };
   }
 
   async postLiberarCorte({ numeroConferencia, usuario, senha, liberar, obs, sequencias }: LiberarCorteBody) {
