@@ -485,6 +485,17 @@ export class ConferenciaService implements OnApplicationBootstrap {
       return this._getFilaFinalizadas(queryParams, page, perPage, temNumtalao, temTipoentrega);
     }
 
+    // ── PERF/CORREÇÃO: short-circuit C-only (aguardando liberação de corte) ──
+    // A query principal pagina no Sankhya ANTES de filtrar por codigoStatus
+    // (filtro é aplicado em memória, depois do LIMIT/OFFSET). Isso faz notas
+    // com STATUS='C' que não estão entre as `perPage` primeiras linhas do
+    // critério geral (sem filtro de status) nunca aparecerem na tela de
+    // Liberação de Corte, mesmo existindo. Filtramos direto no Sankhya via
+    // EXISTS(CON2.STATUS='C'), com paginação correta na origem.
+    if (statusList.length > 0 && statusList.every((s) => s === 'C')) {
+      return this._getFilaAguardandoCorte(queryParams, page, perPage, temNumtalao, temTipoentrega);
+    }
+
     const parameters: { value: any; type: 'S' | 'I' | 'D' | 'B' }[] = [];
     const expressions: string[] = [
       "EXISTS (SELECT 1 FROM TGFTOP TP, TGFCCO CCO WHERE TP.NUCCO = CCO.NUCCO AND TP.CODTIPOPER = TGFCAB.CODTIPOPER AND TP.DHALTER = TGFCAB.DHTIPOPER AND ((CCO.MOMENTOCONFERENCIA = 'C' AND TGFCAB.LIBCONF = 'S') OR (CCO.MOMENTOCONFERENCIA = 'F' AND TGFCAB.STATUSNOTA = 'L')))",
@@ -856,6 +867,129 @@ export class ConferenciaService implements OnApplicationBootstrap {
     } catch {
       return { data: [], hasNextPage: false, total: 0, page, perPage };
     }
+  }
+
+  // Extração do path C-only (aguardando liberação de corte). Filtra e pagina
+  // direto no Sankhya via EXISTS(CON2.STATUS='C') — ver comentário no
+  // chamador em _fetchFila sobre o bug que isso corrige.
+  private async _getFilaAguardandoCorte(
+    queryParams: FilaConferenciaFilter,
+    page: number,
+    perPage: number,
+    temNumtalao: boolean,
+    temTipoentrega: boolean,
+  ) {
+    const parameters: { value: any; type: 'S' | 'I' | 'D' | 'B' }[] = [];
+    const expressions: string[] = [
+      "EXISTS (SELECT 1 FROM TGFCON2 CON2 WHERE CON2.NUCONF = TGFCAB.NUCONFATUAL AND CON2.STATUS = 'C')",
+    ];
+
+    if (queryParams.numeroNota) {
+      expressions.push('NUMNOTA = ?');
+      parameters.push({ value: Number(queryParams.numeroNota), type: 'I' });
+    }
+    if (queryParams.numeroUnico) {
+      expressions.push('NUNOTA = ?');
+      parameters.push({ value: Number(queryParams.numeroUnico), type: 'I' });
+    }
+    if (queryParams.idParceiro) {
+      expressions.push('CODPARC = ?');
+      parameters.push({ value: Number(queryParams.idParceiro), type: 'I' });
+    }
+    if (queryParams.idEmpresa) {
+      expressions.push('CODEMP = ?');
+      parameters.push({ value: Number(queryParams.idEmpresa), type: 'I' });
+    }
+    if (queryParams.codigoTipoMovimento) {
+      const list = queryParams.codigoTipoMovimento.split(',').map((s) => s.trim()).filter(Boolean);
+      if (list.length === 1) {
+        expressions.push('TIPMOV = ?');
+        parameters.push({ value: list[0], type: 'S' });
+      } else if (list.length > 1) {
+        expressions.push(`TIPMOV IN (${list.map(() => '?').join(',')})`);
+        list.forEach((v) => parameters.push({ value: v, type: 'S' }));
+      }
+    }
+    if (queryParams.codigoTipoOperacao) {
+      const list = queryParams.codigoTipoOperacao.split(',').map((s) => s.trim()).filter(Boolean);
+      if (list.length === 1) {
+        expressions.push('CODTIPOPER = ?');
+        parameters.push({ value: Number(list[0]), type: 'I' });
+      } else if (list.length > 1) {
+        expressions.push(`CODTIPOPER IN (${list.map(() => '?').join(',')})`);
+        list.forEach((v) => parameters.push({ value: Number(v), type: 'I' }));
+      }
+    }
+    if (queryParams.numeroModial && temNumtalao) {
+      expressions.push('AD_NUMTALAO = ?');
+      parameters.push({ value: queryParams.numeroModial, type: 'S' });
+    }
+    if (queryParams.ordemCarga) {
+      expressions.push('ORDEMCARGA = ?');
+      parameters.push({ value: Number(queryParams.ordemCarga), type: 'I' });
+    }
+    if (queryParams.dataInicio) {
+      expressions.push('DTNEG >= ?');
+      parameters.push({ value: queryParams.dataInicio, type: 'D' });
+    }
+    if (queryParams.dataFim) {
+      expressions.push('DTNEG <= ?');
+      parameters.push({ value: queryParams.dataFim, type: 'D' });
+    }
+
+    const queryExpression = expressions.join(' AND ');
+
+    const camposAdFila = [
+      temNumtalao ? 'AD_NUMTALAO' : null,
+      temTipoentrega ? 'AD_TIPOENTREGA' : null,
+    ].filter(Boolean).join(',');
+    const fieldsetFila = `NUNOTA,NUMNOTA,NUCONFATUAL,TIPMOV,CODTIPOPER,CODPARC,CODEMP,DTNEG,ORDEMCARGA${camposAdFila ? ',' + camposAdFila : ''},CODVEND`;
+
+    const raw = await this.loadRecordsClient.loadRecords({
+      rootEntity: 'CabecalhoNota',
+      fieldset: fieldsetFila,
+      criteria: {
+        expression: queryExpression,
+        parameters: parameters.length ? parameters : undefined,
+      },
+      joins: [
+        { path: 'Parceiro', fieldset: 'NOMEPARC' },
+        { path: 'TipoOperacao', fieldset: 'DESCROPER' },
+        { path: 'Vendedor', fieldset: 'APELIDO' },
+      ],
+      offsetPage: page,
+      limit: perPage,
+    }).catch((err) => {
+      this.logger.error('[FilaCorte] ERRO Sankhya loadRecords', err?.message);
+      throw err;
+    });
+
+    const rows = this.loadRecordsClient.parseEntities(raw);
+    const hasNextPage = this.loadRecordsClient.hasNextPage(raw);
+
+    let data = rows.map((r) => ({
+      codigoStatus: 'C',
+      statusSankhya: 'C',
+      emAndamentoNativo: false,
+      numeroUnico: Number(r.NUNOTA),
+      numeroNota: Number(r.NUMNOTA),
+      numeroConferencia: r.NUCONFATUAL ? Number(r.NUCONFATUAL) : null,
+      idParceiro: Number(r.CODPARC),
+      nomeParceiro: r['Parceiro_NOMEPARC'] ?? null,
+      idEmpresa: Number(r.CODEMP),
+      codigoTipoMovimento: r.TIPMOV,
+      codigoTipoOperacao: r.CODTIPOPER ? Number(r.CODTIPOPER) : null,
+      descricaoTipoOperacao: r['TipoOperacao_DESCROPER'] ?? null,
+      dataMovimento: r.DTNEG,
+      AD_NUMTALAO: r.AD_NUMTALAO ?? null,
+      AD_TIPOENTREGA: r.AD_TIPOENTREGA ?? null,
+      apelidoVendedor: r['Vendedor_APELIDO'] ?? null,
+      ordemCarga: r.ORDEMCARGA ? Number(r.ORDEMCARGA) : null,
+    }));
+
+    data = await this._anexarEtapas(data);
+
+    return { data, hasNextPage, page, perPage };
   }
 
   // Verificação leve: só bate no banco local, sem Sankhya.
